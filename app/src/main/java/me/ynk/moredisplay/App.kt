@@ -26,5 +26,8 @@ class App : Application() {
         super.onCreate()
         appContext = this
         Log.i(TAG, "app start, lsposed injected=${me.ynk.moredisplay.xposed.LsposedBridge.isInjected}")
+        rikka.shizuku.Shizuku.addBinderReceivedListenerSticky {
+            Log.i(TAG, "shizuku binder received, ping=${rikka.shizuku.Shizuku.pingBinder()}")
+        }
     }
 }

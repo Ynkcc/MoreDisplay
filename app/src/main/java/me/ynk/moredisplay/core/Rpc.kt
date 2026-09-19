@@ -1,5 +1,9 @@
 package me.ynk.moredisplay.core
 
+object DaemonProtocol {
+    const val DAEMON_VERSION = 8
+}
+
 sealed interface RpcRequest {
     val id: Int
 
@@ -14,7 +18,7 @@ sealed interface RpcRequest {
 sealed interface RpcResponse {
     val id: Int
 
-    data class Pong(override val id: Int, val daemonPid: Int) : RpcResponse
+    data class Pong(override val id: Int, val daemonPid: Int, val daemonVersion: Int) : RpcResponse
     data class Capabilities(override val id: Int, val capabilities: DaemonCapabilities) : RpcResponse
     data class DisplayResult(override val id: Int, val info: DisplayInfo) : RpcResponse
     data class DisplayList(override val id: Int, val displays: List<DisplayInfo>) : RpcResponse

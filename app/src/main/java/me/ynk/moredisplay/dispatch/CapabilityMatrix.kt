@@ -34,9 +34,8 @@ object CapabilityMatrix {
             VirtualDisplayFlags.SHOULD_SHOW_SYSTEM_DECORATIONS or
             VirtualDisplayFlags.IME_FALLBACK_DISPLAY
 
-    private fun shellFlags(): Int = VirtualDisplayFlags.OWN_CONTENT_ONLY or
-            VirtualDisplayFlags.OWN_FOCUS_ONLY or
-            VirtualDisplayFlags.OWN_FOCUS
+    // 实测（uid 2000 daemon）：除 TRUSTED 外全部放行；TRUSTED 需特权。
+    private fun shellFlags(): Int = fullFlags() and VirtualDisplayFlags.TRUSTED.inv()
 
     fun flagsForSdk(flags: Int): Int {
         var result = flags

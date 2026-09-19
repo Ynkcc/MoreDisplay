@@ -16,6 +16,10 @@ class DaemonUserService @Keep constructor(context: Context) : IDaemonRpc.Stub() 
 
     private val engine = ShellDisplayEngine(context)
 
+    init {
+        Log.i(TAG, "daemon started, uid=${android.os.Process.myUid()} pid=${android.os.Process.myPid()}")
+    }
+
     override fun invoke(payload: ByteArray): ByteArray {
         val request = runCatching { RpcCodec.unmarshallRequest(payload) }
             .getOrElse {

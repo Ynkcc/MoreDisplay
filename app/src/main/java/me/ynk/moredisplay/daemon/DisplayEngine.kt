@@ -20,7 +20,11 @@ interface RpcServer {
 }
 
 fun handleRequest(engine: DisplayEngine, request: RpcRequest): RpcResponse = when (request) {
-    is RpcRequest.Ping -> RpcResponse.Pong(request.id, android.os.Process.myPid())
+    is RpcRequest.Ping -> RpcResponse.Pong(
+        request.id,
+        android.os.Process.myPid(),
+        me.ynk.moredisplay.core.DaemonProtocol.DAEMON_VERSION
+    )
     is RpcRequest.GetCapabilities -> RpcResponse.Capabilities(request.id, engine.capabilities)
     is RpcRequest.CreateDisplay -> runCatching { engine.createDisplay(request.spec) }
         .fold(

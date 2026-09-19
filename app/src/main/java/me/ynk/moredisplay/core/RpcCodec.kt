@@ -96,6 +96,7 @@ object RpcCodec {
             is RpcResponse.Pong -> {
                 parcel.writeInt(TAG_PONG)
                 parcel.writeInt(response.daemonPid)
+                parcel.writeInt(response.daemonVersion)
             }
             is RpcResponse.Capabilities -> {
                 parcel.writeInt(TAG_CAPABILITIES)
@@ -122,7 +123,7 @@ object RpcCodec {
     private fun readResponse(parcel: Parcel): RpcResponse {
         val id = parcel.readInt()
         return when (val tag = parcel.readInt()) {
-            TAG_PONG -> RpcResponse.Pong(id, parcel.readInt())
+            TAG_PONG -> RpcResponse.Pong(id, parcel.readInt(), parcel.readInt())
             TAG_CAPABILITIES -> RpcResponse.Capabilities(id, readCapabilities(parcel))
             TAG_DISPLAY_RESULT -> RpcResponse.DisplayResult(id, readInfo(parcel))
             TAG_DISPLAY_LIST -> {

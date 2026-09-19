@@ -65,34 +65,74 @@ class ShizukuDaemonProvider : DaemonProvider {
             return@runCatching
         }
         val context: Context = App.context
-        val connected = CompletableDeferred<IDaemonRpc>()
         val args = Shizuku.UserServiceArgs(
             ComponentName(context.packageName, DaemonUserService::class.java.name)
         )
             .daemon(true)
             .processNameSuffix("daemon")
-            .version(1)
-        val connection = object : ServiceConnection {
-            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-                if (binder == null) {
-                    connected.completeExceptionally(IllegalStateException("shizuku returned null binder for $name"))
-                } else {
-                    connected.complete(IDaemonRpc.Stub.asInterface(binder))
+            .version(2)
+        userServiceArgs = args
+
+        fun newConnection(): Pair<CompletableDeferred<IDaemonRpc>, ServiceConnection> {
+            val connected = CompletableDeferred<IDaemonRpc>()
+            val connection = object : ServiceConnection {
+                override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                    if (binder == null) {
+                        connected.completeExceptionally(IllegalStateException("shizuku returned null binder for $name"))
+                    } else {
+                        connected.complete(IDaemonRpc.Stub.asInterface(binder))
+                    }
+                }
+
+                override fun onServiceDisconnected(name: ComponentName?) {
+                    Log.w(TAG, "shizuku daemon service disconnected: $name")
+                    remote = null
                 }
             }
+            return connected to connection
+        }
 
-            override fun onServiceDisconnected(name: ComponentName?) {
-                Log.w(TAG, "shizuku daemon service disconnected: $name")
-                remote = null
+        suspend fun bind(): IDaemonRpc {
+            val (connected, connection) = newConnection()
+            serviceConnection = connection
+            withContext(Dispatchers.Main) {
+                Shizuku.bindUserService(args, connection)
             }
+            return withTimeout(BIND_TIMEOUT_MS) { connected.await() }
         }
-        withContext(Dispatchers.Main) {
-            Shizuku.bindUserService(args, connection)
+
+        remote = bind()
+        if (!verifyDaemonVersion()) {
+            Log.w(TAG, "daemon version mismatch, destroying stale daemon and rebinding")
+            remote?.destroy()
+            remote = null
+            remote = bind()
+            verifyDaemonVersion()
         }
-        userServiceArgs = args
-        serviceConnection = connection
-        remote = withTimeout(BIND_TIMEOUT_MS) { connected.await() }
         Log.i(TAG, "shizuku daemon bound, binder alive=${remote?.asBinder()?.isBinderAlive}")
+    }
+
+    private fun verifyDaemonVersion(): Boolean {
+        val stub = remote ?: return false
+        val response = runCatching {
+            me.ynk.moredisplay.core.RpcCodec.unmarshallResponse(
+                stub.invoke(me.ynk.moredisplay.core.RpcCodec.marshallRequest(
+                    me.ynk.moredisplay.core.RpcRequest.Ping(0)
+                ))
+            )
+        }.getOrElse {
+            Log.e(TAG, "version probe failed", it)
+            return false
+        }
+        val pong = response as? me.ynk.moredisplay.core.RpcResponse.Pong
+        val actual = pong?.daemonVersion ?: -1
+        val expected = me.ynk.moredisplay.core.DaemonProtocol.DAEMON_VERSION
+        if (actual != expected) {
+            Log.w(TAG, "daemon version mismatch: expected=$expected actual=$actual pid=${pong?.daemonPid}")
+            return false
+        }
+        Log.i(TAG, "daemon version ok: v$actual pid=${pong?.daemonPid}")
+        return true
     }
 
     override suspend fun stopDaemon(): Result<Unit> = runCatching {
@@ -118,7 +158,7 @@ class RootDaemonProvider : DaemonProvider {
     override val privilege = Privilege.ROOT
     override val priority = 10
 
-    override fun isAvailable(): Boolean = TODO("root availability check (su -c true)")
+    override fun isAvailable(): Boolean = false
 
     override suspend fun startDaemon(): Result<Unit> = TODO("adb/root: app_process launch kotlin daemon jar")
 
