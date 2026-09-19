@@ -9,6 +9,7 @@ material = "1.14.0"
 libxposedApi = "102.0.0"
 libxposedAnnotation = "1.0.0"
 androidxAnnotation = "1.5.0"
+shizuku = "13.1.5"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -20,6 +21,8 @@ material = { group = "com.google.android.material", name = "material", version.r
 libxposed-api = { group = "io.github.libxposed", name = "api", version.ref = "libxposedApi" }
 libxposed-annotation = { group = "io.github.libxposed", name = "annotation", version.ref = "libxposedAnnotation" }
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
+shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
+shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -29,6 +29,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
+    buildFeatures {
+        aidl = true
+    }
 }
 
 dependencies {
@@ -38,6 +42,8 @@ dependencies {
     compileOnly(libs.libxposed.api)
     compileOnly(libs.libxposed.annotation)
     compileOnly(libs.androidx.annotation)
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
