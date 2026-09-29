@@ -43,6 +43,12 @@ interface IDisplayRepository {
     suspend fun holdDisplay(displayId: Int): Result<DisplayInfo>
     suspend fun removeDisplay(displayId: Int): Result<Unit>
     suspend fun listDisplays(): Result<List<DisplayInfo>>
+
+    suspend fun setDisplayPolicy(policy: DisplayPolicy): Result<DisplayPolicy>
+    suspend fun listDisplayPolicies(): Result<List<DisplayPolicy>>
+    suspend fun removeDisplayPolicy(uid: Int): Result<Unit>
+    suspend fun displaysForUid(uid: Int): Result<List<Int>>
+
     fun refreshDisplays()
 }
 

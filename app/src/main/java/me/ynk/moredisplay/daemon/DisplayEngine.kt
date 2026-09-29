@@ -46,4 +46,44 @@ fun handleRequest(engine: DisplayEngine, request: RpcRequest): RpcResponse = whe
             }
         )
     is RpcRequest.ListDisplays -> RpcResponse.DisplayList(request.id, engine.listDisplays())
+
+    is RpcRequest.SetDisplayPolicy -> runCatching {
+        val stored = DisplayPolicyRegistry.set(request.policy)
+        android.util.Log.i(
+            "MoreDisplay_Policy",
+            "policy set: ${stored.describe()} (total=${DisplayPolicyRegistry.list().size})"
+        )
+        RpcResponse.PolicyResult(request.id, stored)
+    }.getOrElse {
+        RpcResponse.Error(request.id, 4, "setDisplayPolicy failed: ${it.message}")
+    }
+    is RpcRequest.GetDisplayPolicy ->
+        RpcResponse.PolicyResult(request.id, DisplayPolicyRegistry.get(request.uid))
+    is RpcRequest.RemoveDisplayPolicy -> runCatching {
+        val removed = DisplayPolicyRegistry.remove(request.uid)
+        android.util.Log.i(
+            "MoreDisplay_Policy",
+            "policy remove uid=${request.uid} removed=$removed (total=${DisplayPolicyRegistry.list().size})"
+        )
+        RpcResponse.Ok(request.id)
+    }.getOrElse {
+        RpcResponse.Error(request.id, 5, "removeDisplayPolicy failed: ${it.message}")
+    }
+    is RpcRequest.ListDisplayPolicies -> {
+        logHookStats("listPolicies")
+        RpcResponse.PolicyList(request.id, DisplayPolicyRegistry.list())
+    }
+    is RpcRequest.DisplaysForUid -> runCatching {
+        logHookStats("displaysForUid")
+        RpcResponse.IdList(request.id, DisplayQuery.visibleDisplayIds(request.uid))
+    }.getOrElse {
+        RpcResponse.Error(request.id, 6, "displaysForUid failed: ${it.message}")
+    }
+}
+
+/** 打印 Hook 命中计数，区分「已装」与「已生效」。 */
+private fun logHookStats(trigger: String) {
+    DisplayPolicyRegistry.statsProvider?.invoke()?.let {
+        android.util.Log.i("MoreDisplay_Policy", "hook stats @$trigger: $it")
+    }
 }

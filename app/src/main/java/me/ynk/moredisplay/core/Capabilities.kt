@@ -35,7 +35,13 @@ data class DaemonCapabilities(
     val supportedFlags: Int,
     val launchOnDisplayBypass: Boolean,
     val unlockedDisplay: Boolean,
-    val privilegedSurface: Boolean
+    val privilegedSurface: Boolean,
+    /** 需求 A：能否按调用方 uid 过滤屏幕可见性（黑/白名单）。 */
+    val perUidDisplayVisibility: Boolean = false,
+    /** 需求 B（未实现）：录屏屏替换。 */
+    val recordRedirection: Boolean = false,
+    /** 需求 C（未实现）：无障碍屏替换。 */
+    val accessibilityRedirection: Boolean = false
 ) {
     fun supportsFlags(flags: Int): Boolean = flags and supportedFlags.inv() == 0
 

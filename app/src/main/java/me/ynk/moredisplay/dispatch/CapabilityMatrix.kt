@@ -12,14 +12,17 @@ object CapabilityMatrix {
             supportedFlags = fullFlags(),
             launchOnDisplayBypass = true,
             unlockedDisplay = true,
-            privilegedSurface = true
+            privilegedSurface = true,
+            // 只有 hook 进 system_server 才能按调用方 uid 裁剪 DMS 返回值。
+            perUidDisplayVisibility = true
         )
         Privilege.ROOT, Privilege.SHELL_SHIZUKU -> DaemonCapabilities(
             maxDisplayCount = Int.MAX_VALUE,
             supportedFlags = shellFlags(),
             launchOnDisplayBypass = false,
             unlockedDisplay = false,
-            privilegedSurface = true
+            privilegedSurface = true,
+            perUidDisplayVisibility = false
         )
         Privilege.NONE -> DaemonCapabilities.none()
     }

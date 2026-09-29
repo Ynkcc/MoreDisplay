@@ -6,6 +6,7 @@ import android.util.Log
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
 import me.ynk.moredisplay.daemon.DisplayEngine
+import me.ynk.moredisplay.daemon.DisplayPolicyRegistry
 import me.ynk.moredisplay.daemon.ProviderRpc
 import me.ynk.moredisplay.daemon.SystemDisplayEngine
 import java.lang.reflect.Executable
@@ -18,7 +19,9 @@ import java.util.concurrent.ConcurrentHashMap
  * 1. 在 system_server 内建起虚拟屏引擎，并 Hook `ContentProvider$Transport#call`
  *    给 App 提供 RPC 应答（见 [ProviderRpc]）；
  * 2. 放宽 `ActivityTaskSupervisor#isCallerAllowedToLaunchOnDisplay`，
- *    让应用可以把自己启动到我们托管的虚拟屏上。
+ *    让应用可以把自己启动到我们托管的虚拟屏上；
+ * 3. 按调用方 uid 过滤屏幕可见性（列表 / 点名 / 事件三处，见
+ *    [installDisplayVisibilityHooks]），**不 Hook 目标 App**。
  */
 class LsposedModule : XposedModule() {
 
@@ -36,6 +39,8 @@ class LsposedModule : XposedModule() {
         hookAmsContext(param.classLoader)
         hookProviderRpc()
         hookLaunchPermission(param.classLoader)
+        installDisplayVisibilityHooks(param.classLoader)
+        DisplayPolicyRegistry.statsProvider = { visibilityHookStats() }
     }
 
     override fun onPackageReady(param: XposedModuleInterface.PackageReadyParam) {

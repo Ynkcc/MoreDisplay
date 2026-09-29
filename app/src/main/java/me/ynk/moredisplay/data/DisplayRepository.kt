@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import me.ynk.moredisplay.core.ConnectionStatus
 import me.ynk.moredisplay.core.DisplayInfo
+import me.ynk.moredisplay.core.DisplayPolicy
 import me.ynk.moredisplay.core.DisplaySpec
 import me.ynk.moredisplay.core.DaemonCapabilities
 import me.ynk.moredisplay.core.IDisplayRepository
@@ -122,6 +123,35 @@ class DisplayRepository : IDisplayRepository {
         return (response as? RpcResponse.DisplayList)
             ?.let { Result.success(it.displays) }
             ?: Result.failure(IllegalStateException("listDisplays: ${response.message()}"))
+    }
+
+    override suspend fun setDisplayPolicy(policy: DisplayPolicy): Result<DisplayPolicy> {
+        val response = call { RpcRequest.SetDisplayPolicy(nextId(), policy) }
+        return (response as? RpcResponse.PolicyResult)?.policy
+            ?.let { Result.success(it) }
+            ?: Result.failure(IllegalStateException("setDisplayPolicy: ${response.message()}"))
+    }
+
+    override suspend fun listDisplayPolicies(): Result<List<DisplayPolicy>> {
+        val response = call { RpcRequest.ListDisplayPolicies(nextId()) }
+        return (response as? RpcResponse.PolicyList)
+            ?.let { Result.success(it.policies) }
+            ?: Result.failure(IllegalStateException("listDisplayPolicies: ${response.message()}"))
+    }
+
+    override suspend fun removeDisplayPolicy(uid: Int): Result<Unit> {
+        val response = call { RpcRequest.RemoveDisplayPolicy(nextId(), uid) }
+        return when (response) {
+            is RpcResponse.Ok -> Result.success(Unit)
+            else -> Result.failure(IllegalStateException("removeDisplayPolicy $uid: ${response.message()}"))
+        }
+    }
+
+    override suspend fun displaysForUid(uid: Int): Result<List<Int>> {
+        val response = call { RpcRequest.DisplaysForUid(nextId(), uid) }
+        return (response as? RpcResponse.IdList)
+            ?.let { Result.success(it.ids) }
+            ?: Result.failure(IllegalStateException("displaysForUid: ${response.message()}"))
     }
 
     override fun refreshDisplays() {
