@@ -39,6 +39,11 @@ data class DisplayPolicy(
     fun describe(): String {
         val target = packageName?.let { "$it($uid)" } ?: "uid=$uid"
         val ids = displayIds.sorted().joinToString(",")
-        return "$target ${visibility.name}[$ids]"
+        val extras = listOfNotNull(
+            recordDisplayId?.let { "record=$it" },
+            operatedDisplayId?.let { "operated=$it" }
+        )
+        val suffix = if (extras.isEmpty()) "" else " " + extras.joinToString(" ")
+        return "$target ${visibility.name}[$ids]$suffix"
     }
 }

@@ -28,6 +28,10 @@ class CommandActivity : Activity() {
         const val EXTRA_MODE = "mode"
         const val EXTRA_DISPLAY_IDS = "display_ids"
 
+        /** 需求 B：录屏时把 mirror 源改写到该 displayId。（需求 C 预留 operated_display_id） */
+        const val EXTRA_RECORD_DISPLAY_ID = "record_display_id"
+        const val EXTRA_OPERATED_DISPLAY_ID = "operated_display_id"
+
         private const val ACTION_CREATE = "create"
         private const val ACTION_REMOVE = "remove"
         private const val ACTION_HOLD = "hold"
@@ -115,7 +119,9 @@ class CommandActivity : Activity() {
                     uid = uid,
                     packageName = intent.getStringExtra(EXTRA_TARGET_PACKAGE),
                     visibility = mode,
-                    displayIds = ids
+                    displayIds = ids,
+                    operatedDisplayId = intent.getIntExtra(EXTRA_OPERATED_DISPLAY_ID, -1).takeIf { it >= 0 },
+                    recordDisplayId = intent.getIntExtra(EXTRA_RECORD_DISPLAY_ID, -1).takeIf { it >= 0 }
                 )
                 val stored = repo.setDisplayPolicy(policy).getOrElse {
                     throw IllegalStateException("setDisplayPolicy failed: ${it.message}", it)

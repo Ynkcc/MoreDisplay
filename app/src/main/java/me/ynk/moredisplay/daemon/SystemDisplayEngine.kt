@@ -1,9 +1,14 @@
 package me.ynk.moredisplay.daemon
 
 import android.content.Context
+import android.graphics.PixelFormat
 import android.hardware.display.VirtualDisplay
 import android.hardware.display.VirtualDisplayConfig
+import android.media.ImageReader
+import android.os.Handler
+import android.os.HandlerThread
 import android.util.Log
+import android.view.Surface
 import me.ynk.moredisplay.core.DisplayInfo
 import me.ynk.moredisplay.core.DisplaySpec
 import me.ynk.moredisplay.core.Privilege
@@ -21,6 +26,17 @@ import me.ynk.moredisplay.dispatch.CapabilityMatrix
  * `DisplayManager` 构造期捕获的 `mGlobal` 会是 null（且该实例已被 Context 缓存），
  * 之后再调用 `createVirtualDisplay` 必然 NPE。
  * `DisplayManagerGlobal.getInstance()` 是静态方法、每次都会重试取服务，因此安全。
+ *
+ * ## 为什么必须给它挂一个「丢弃型」输出 Surface（实测踩坑）
+ * `VirtualDisplayDevice` 的 `mDisplayState` 取决于**有没有输出 Surface**：没有 surface 时
+ * `DisplayDeviceInfo.state` 会是 `STATE_OFF`，SurfaceFlinger 不会对该屏做合成，
+ * 于是该屏上的 App 拿不到 vsync、窗口一直停在 `mDrawState=NO_SURFACE / mLastHidden=true`，
+ * 永远不绘制 —— 表现就是「Activity 起得来（任务栈确实在 display N），但一张画面都没有」，
+ * 自然也就录不到任何内容。
+ *
+ * 因此这里用一个 system_server 内的 `ImageReader` 当**输出接收端**：它让该屏变成
+ * `state ON`、被真正合成；回调里立刻 `close()` 掉图像（只当 Sink，不消费内容），
+ * 这样缓冲区会立刻回收、不会把合成卡住。托管屏的**内容**始终是它自己的 layer stack。
  */
 class SystemDisplayEngine(
     private val systemContext: Context
@@ -34,6 +50,12 @@ class SystemDisplayEngine(
     private val lock = Any()
     private val managed = LinkedHashMap<Int, DisplayInfo>()
     private val handles = LinkedHashMap<Int, VirtualDisplay>()
+
+    /** displayId → 该屏的输出接收端（丢弃型 sink）。 */
+    private val sinks = LinkedHashMap<Int, ImageReader>()
+
+    private val sinkThread = HandlerThread("MoreDisplay-display-sink").apply { start() }
+    private val sinkHandler = Handler(sinkThread.looper)
 
     override val capabilities = CapabilityMatrix.forPrivilege(Privilege.LSPOSED)
 
@@ -51,34 +73,61 @@ class SystemDisplayEngine(
                 it.returnType == VirtualDisplay::class.java
         } ?: throw NoSuchMethodException("createVirtualDisplay(Context, ...): VirtualDisplay not found")
 
+        val sink = newSink(spec.width, spec.height)
         val config = VirtualDisplayConfig.Builder(spec.name, spec.width, spec.height, spec.densityDpi)
             .setFlags(flags)
+            .setSurface(sink.surface)
             .build()
-        val vd = create.invoke(global, systemContext, null, config, null, null) as? VirtualDisplay
-            ?: throw IllegalStateException("createVirtualDisplay returned null for $spec")
+        val vd = runCatching { create.invoke(global, systemContext, null, config, null, null) as? VirtualDisplay }
+            .getOrElse {
+                runCatching { sink.reader.close() }
+                throw it
+            } ?: run {
+            runCatching { sink.reader.close() }
+            throw IllegalStateException("createVirtualDisplay returned null for $spec")
+        }
 
         val info = DisplayInfo(vd.display.displayId, spec)
         synchronized(lock) {
             managed[info.displayId] = info
             handles[info.displayId] = vd
+            sinks[info.displayId] = sink.reader
         }
         Log.i(
             TAG,
             "created displayId=${info.displayId} ${spec.width}x${spec.height}@${spec.densityDpi} " +
-                "flags=0x${Integer.toHexString(flags)} owner=${systemContext.packageName}"
+                "flags=0x${Integer.toHexString(flags)} owner=${systemContext.packageName} (with output sink)"
         )
         return info
     }
 
+    /**
+     * 建一个「只接收、立刻丢弃」的输出 Surface，让该虚拟屏被 SurfaceFlinger 真正合成（state ON）。
+     * 尺寸按屏分辨率给，实际 buffer 尺寸由生产端（SurfaceFlinger）决定。
+     */
+    private fun newSink(width: Int, height: Int): Sink {
+        val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        reader.setOnImageAvailableListener({ r ->
+            runCatching { r.acquireLatestImage()?.close() }
+        }, sinkHandler)
+        return Sink(reader, reader.surface)
+    }
+
+    private class Sink(val reader: ImageReader, val surface: Surface)
+
     override fun holdDisplay(displayId: Int): DisplayInfo? = synchronized(lock) { managed[displayId] }
 
     override fun removeDisplay(displayId: Int) {
-        val vd = synchronized(lock) {
+        val vd: VirtualDisplay
+        val sink: ImageReader?
+        synchronized(lock) {
             managed.remove(displayId) ?: throw IllegalArgumentException("display $displayId not managed")
-            handles.remove(displayId)
+            vd = handles.remove(displayId)
                 ?: throw IllegalStateException("display $displayId has no VirtualDisplay handle")
+            sink = sinks.remove(displayId)
         }
-        vd.release()
+        runCatching { vd.release() }
+        runCatching { sink?.close() }
         Log.i(TAG, "released displayId=$displayId")
     }
 

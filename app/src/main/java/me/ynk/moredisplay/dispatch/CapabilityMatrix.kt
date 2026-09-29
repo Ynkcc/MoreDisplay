@@ -14,7 +14,9 @@ object CapabilityMatrix {
             unlockedDisplay = true,
             privilegedSurface = true,
             // 只有 hook 进 system_server 才能按调用方 uid 裁剪 DMS 返回值。
-            perUidDisplayVisibility = true
+            perUidDisplayVisibility = true,
+            // 也只有 hook 进 system_server 才能在 createVirtualDisplayInternal 里改写 mirror 源。
+            recordRedirection = true
         )
         Privilege.ROOT, Privilege.SHELL_SHIZUKU -> DaemonCapabilities(
             maxDisplayCount = Int.MAX_VALUE,
@@ -22,7 +24,8 @@ object CapabilityMatrix {
             launchOnDisplayBypass = false,
             unlockedDisplay = false,
             privilegedSurface = true,
-            perUidDisplayVisibility = false
+            perUidDisplayVisibility = false,
+            recordRedirection = false
         )
         Privilege.NONE -> DaemonCapabilities.none()
     }

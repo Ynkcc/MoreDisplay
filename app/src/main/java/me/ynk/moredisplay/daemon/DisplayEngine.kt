@@ -47,15 +47,27 @@ fun handleRequest(engine: DisplayEngine, request: RpcRequest): RpcResponse = whe
         )
     is RpcRequest.ListDisplays -> RpcResponse.DisplayList(request.id, engine.listDisplays())
 
-    is RpcRequest.SetDisplayPolicy -> runCatching {
-        val stored = DisplayPolicyRegistry.set(request.policy)
-        android.util.Log.i(
-            "MoreDisplay_Policy",
-            "policy set: ${stored.describe()} (total=${DisplayPolicyRegistry.list().size})"
-        )
-        RpcResponse.PolicyResult(request.id, stored)
-    }.getOrElse {
-        RpcResponse.Error(request.id, 4, "setDisplayPolicy failed: ${it.message}")
+    is RpcRequest.SetDisplayPolicy -> {
+        // 需求 B 前置校验：录屏替换目标屏必须真实存在，否则会让镜像指向一个死 id。
+        val recordId = request.policy.recordDisplayId
+        if (recordId != null && !DisplayQuery.rawDisplayIds().contains(recordId)) {
+            RpcResponse.Error(
+                request.id,
+                7,
+                "recordDisplayId=$recordId 当前不存在，请先 create 托管屏（现有 ${DisplayQuery.rawDisplayIds()}）"
+            )
+        } else {
+            runCatching {
+                val stored = DisplayPolicyRegistry.set(request.policy)
+                android.util.Log.i(
+                    "MoreDisplay_Policy",
+                    "policy set: ${stored.describe()} (total=${DisplayPolicyRegistry.list().size})"
+                )
+                RpcResponse.PolicyResult(request.id, stored)
+            }.getOrElse {
+                RpcResponse.Error(request.id, 4, "setDisplayPolicy failed: ${it.message}")
+            }
+        }
     }
     is RpcRequest.GetDisplayPolicy ->
         RpcResponse.PolicyResult(request.id, DisplayPolicyRegistry.get(request.uid))

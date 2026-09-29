@@ -83,6 +83,15 @@ object DisplayPolicyRegistry {
         policedIds = policies.values.flatMapTo(mutableSetOf()) { it.displayIds }
     }
 
+    /**
+     * 需求 B：该 uid 的录屏镜像目标屏。
+     * 只在「是 App uid 且配置了 recordDisplayId」时返回非空；否则 null（=不干预）。
+     */
+    fun recordDisplayIdFor(uid: Int): Int? {
+        if (!isAppUid(uid)) return null
+        return get(uid)?.recordDisplayId
+    }
+
     /** 该 uid 是否应当看到该 displayId。 */
     fun isVisible(uid: Int, displayId: Int): Boolean {
         // 默认屏永不过滤（见 DEFAULT_DISPLAY_ID 注释：摘掉会让 DecorContext NPE）。

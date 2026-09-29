@@ -21,7 +21,8 @@ import java.util.concurrent.ConcurrentHashMap
  * 2. 放宽 `ActivityTaskSupervisor#isCallerAllowedToLaunchOnDisplay`，
  *    让应用可以把自己启动到我们托管的虚拟屏上；
  * 3. 按调用方 uid 过滤屏幕可见性（列表 / 点名 / 事件三处，见
- *    [installDisplayVisibilityHooks]），**不 Hook 目标 App**。
+ *    [installDisplayVisibilityHooks]），**不 Hook 目标 App**；
+ * 4. 按调用方 uid 把录屏的 mirror 源改写到托管屏（见 [installRecordMirrorHooks]）。
  */
 class LsposedModule : XposedModule() {
 
@@ -40,7 +41,8 @@ class LsposedModule : XposedModule() {
         hookProviderRpc()
         hookLaunchPermission(param.classLoader)
         installDisplayVisibilityHooks(param.classLoader)
-        DisplayPolicyRegistry.statsProvider = { visibilityHookStats() }
+        installRecordMirrorHooks(param.classLoader)
+        DisplayPolicyRegistry.statsProvider = { "${visibilityHookStats()} | ${recordMirrorHookStats()}" }
     }
 
     override fun onPackageReady(param: XposedModuleInterface.PackageReadyParam) {
