@@ -6,6 +6,12 @@
 
 # Shizuku UserService 在独立 shell 进程中以应用 APK 类加载器实例化，
 # 保留入口类构造器与 Stub，避免裁剪/混淆破坏跨进程反射。
+# LibXposed API 102 模块入口：保留 XposedModule 子类与无参构造器
+-keep,allowoptimization,allowobfuscation public class * extends io.github.libxposed.api.XposedModule {
+    public <init>();
+}
+-dontwarn io.github.libxposed.annotation.**
+
 -keep class me.ynk.moredisplay.shizuku.DaemonUserService {
     public <init>(android.content.Context);
     public *;

@@ -31,7 +31,7 @@ class LsposedDaemonProvider : DaemonProvider {
     override suspend fun stopDaemon(): Result<Unit> = Result.success(Unit)
 
     override suspend fun connectTransport(): Result<Transport> = runCatching {
-        me.ynk.moredisplay.transport.BinderTransport.connect()
+        me.ynk.moredisplay.transport.ProviderTransport(App.context)
     }
 }
 

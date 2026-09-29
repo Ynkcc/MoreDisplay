@@ -29,7 +29,10 @@ fun handleRequest(engine: DisplayEngine, request: RpcRequest): RpcResponse = whe
     is RpcRequest.CreateDisplay -> runCatching { engine.createDisplay(request.spec) }
         .fold(
             { RpcResponse.DisplayResult(request.id, it) },
-            { RpcResponse.Error(request.id, 1, "createDisplay failed: ${it.message}") }
+            {
+                android.util.Log.e("MoreDisplay_Rpc", "createDisplay failed for ${request.spec}", it)
+                RpcResponse.Error(request.id, 1, "createDisplay failed: ${it.message}")
+            }
         )
     is RpcRequest.HoldDisplay -> engine.holdDisplay(request.displayId)
         ?.let { RpcResponse.DisplayResult(request.id, it) }
@@ -37,7 +40,10 @@ fun handleRequest(engine: DisplayEngine, request: RpcRequest): RpcResponse = whe
     is RpcRequest.RemoveDisplay -> runCatching { engine.removeDisplay(request.displayId) }
         .fold(
             { RpcResponse.Ok(request.id) },
-            { RpcResponse.Error(request.id, 3, "removeDisplay failed: ${it.message}") }
+            {
+                android.util.Log.e("MoreDisplay_Rpc", "removeDisplay ${request.displayId} failed", it)
+                RpcResponse.Error(request.id, 3, "removeDisplay failed: ${it.message}")
+            }
         )
     is RpcRequest.ListDisplays -> RpcResponse.DisplayList(request.id, engine.listDisplays())
 }
