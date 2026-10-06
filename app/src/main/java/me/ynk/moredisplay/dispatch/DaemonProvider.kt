@@ -54,5 +54,5 @@ object DispatchCenter {
     }
 }
 
-private inline fun <T, R> Result<T>.flatMapCatching(transform: (T) -> Result<R>): Result<R> =
+internal inline fun <T, R> Result<T>.flatMapCatching(transform: (T) -> Result<R>): Result<R> =
     fold({ transform(it) }, { Result.failure(it) })

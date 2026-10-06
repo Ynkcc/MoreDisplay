@@ -28,6 +28,9 @@ class CommandActivity : Activity() {
         const val EXTRA_MODE = "mode"
         const val EXTRA_DISPLAY_IDS = "display_ids"
 
+        /** create 时指定守护通道：lsposed / shell_shizuku（缺省取最高优先级已连接通道）。 */
+        const val EXTRA_PRIVILEGE = "privilege"
+
         /** 需求 B：录屏时把 mirror 源改写到该 displayId。（需求 C 预留 operated_display_id） */
         const val EXTRA_RECORD_DISPLAY_ID = "record_display_id"
         const val EXTRA_OPERATED_DISPLAY_ID = "operated_display_id"
@@ -40,6 +43,9 @@ class CommandActivity : Activity() {
         private const val ACTION_POLICY_LIST = "policy-list"
         private const val ACTION_POLICY_REMOVE = "policy-remove"
         private const val ACTION_DISPLAYS_FOR_UID = "displays-for-uid"
+
+        /** 请求 Shizuku 授权（弹出系统对话框，用户点允许后日志输出结果）。 */
+        private const val ACTION_SHIZUKU_PERMIT = "shizuku-permit"
     }
 
     private val executor = Executors.newSingleThreadExecutor { r ->
@@ -81,10 +87,18 @@ class CommandActivity : Activity() {
                     name = intent.getStringExtra(EXTRA_NAME) ?: "MoreDisplay",
                     flags = intent.getIntExtra(EXTRA_FLAGS, 0)
                 )
-                val info = repo.createDisplay(spec).getOrElse {
+                val privilege = intent.getStringExtra(EXTRA_PRIVILEGE)?.let { raw ->
+                    me.ynk.moredisplay.core.Privilege.entries.firstOrNull {
+                        it.name.equals(raw, ignoreCase = true)
+                    } ?: throw IllegalArgumentException(
+                        "unknown privilege '$raw' (candidates: lsposed/root/shell_shizuku)"
+                    )
+                }
+                val info = repo.createDisplay(spec, privilege).getOrElse {
                     throw IllegalStateException("createDisplay failed: ${it.message}", it)
                 }
-                "display ${info.displayId} ${info.spec.width}x${info.spec.height}@${info.spec.densityDpi} flags=0x${Integer.toHexString(info.spec.flags)}"
+                "display ${info.displayId} ${info.spec.width}x${info.spec.height}@${info.spec.densityDpi} " +
+                    "flags=0x${Integer.toHexString(info.spec.flags)} via ${repo.displayOrigin(info.displayId)}"
             }
             ACTION_REMOVE -> {
                 val id = intent.getIntExtra(EXTRA_DISPLAY_ID, -1)
@@ -105,7 +119,8 @@ class CommandActivity : Activity() {
             ACTION_LIST -> repo.listDisplays().getOrElse {
                 throw IllegalStateException("listDisplays failed: ${it.message}", it)
             }.joinToString(prefix = "displays: ") {
-                "${it.displayId}(${it.spec.width}x${it.spec.height}@${it.spec.densityDpi})"
+                val via = repo.displayOrigin(it.displayId)?.let { p -> "@$p" } ?: ""
+                "${it.displayId}(${it.spec.width}x${it.spec.height}@${it.spec.densityDpi}$via)"
             }
 
             ACTION_POLICY_SET -> {
@@ -153,8 +168,38 @@ class CommandActivity : Activity() {
                 }
                 "uid=$uid visible displays: $ids"
             }
+            ACTION_SHIZUKU_PERMIT -> {
+                if (rikka.shizuku.Shizuku.getVersion() < 11) {
+                    "shizuku server too old, upgrade shizuku"
+                } else if (rikka.shizuku.Shizuku.checkSelfPermission() ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    "shizuku already granted"
+                } else {
+                    val result = kotlinx.coroutines.CompletableDeferred<Int>()
+                    val listener = object : rikka.shizuku.Shizuku.OnRequestPermissionResultListener {
+                        override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
+                            if (requestCode == 100) result.complete(grantResult)
+                        }
+                    }
+                    rikka.shizuku.Shizuku.addRequestPermissionResultListener(listener)
+                    try {
+                        rikka.shizuku.Shizuku.requestPermission(100)
+                        val granted = kotlinx.coroutines.withTimeoutOrNull(30_000) { result.await() }
+                        when {
+                            granted == null -> "shizuku permission request timed out (dialog dismissed?)"
+                            granted == android.content.pm.PackageManager.PERMISSION_GRANTED ->
+                                "shizuku granted"
+                            else -> "shizuku denied: $granted"
+                        }
+                    } finally {
+                        rikka.shizuku.Shizuku.removeRequestPermissionResultListener(listener)
+                    }
+                }
+            }
             else -> throw IllegalArgumentException(
-                "unknown action: $action (create/remove/hold/list/policy-set/policy-list/policy-remove/displays-for-uid)"
+                "unknown action: $action (create/remove/hold/list/policy-set/policy-list/" +
+                    "policy-remove/displays-for-uid/shizuku-permit)"
             )
         }
     }

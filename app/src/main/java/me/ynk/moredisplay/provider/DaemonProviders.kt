@@ -48,16 +48,21 @@ class ShizukuDaemonProvider : DaemonProvider {
     private var serviceConnection: ServiceConnection? = null
     private var remote: IDaemonRpc? = null
 
-    override fun isAvailable(): Boolean =
-        runCatching { Shizuku.pingBinder() }.getOrElse {
+    override fun isAvailable(): Boolean {
+        val binderAlive = runCatching { Shizuku.pingBinder() }.getOrElse {
             Log.d(TAG, "shizuku binder unavailable: ${it.message}")
             false
-        } && runCatching {
+        }
+        if (!binderAlive) return false
+        val granted = runCatching {
             Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         }.getOrElse {
             Log.d(TAG, "shizuku permission check failed: ${it.message}")
             false
         }
+        if (!granted) Log.d(TAG, "shizuku binder alive but permission not granted")
+        return granted
+    }
 
     override suspend fun startDaemon(): Result<Unit> = runCatching {
         if (remote != null) {
