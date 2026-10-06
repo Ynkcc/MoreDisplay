@@ -34,6 +34,13 @@ interface IDisplayRepository {
     val connectionStatus: StateFlow<ConnectionStatus>
     val connectionError: StateFlow<String?>
     val managedDisplays: StateFlow<Map<Int, DisplayInfo>>
+
+    /**
+     * 按通道分组的托管屏。key 为创建/托管它的通道 privilege
+     * （未知归属归入 [Privilege.NONE]），供 UI 分通道管理。
+     */
+    val displaysByChannel: StateFlow<Map<Privilege, List<DisplayInfo>>>
+
     /** 当前激活的最高优先级工作模式（多通道并行时的主通道）。 */
     val workMode: StateFlow<WorkModeInfo>
     /** 所有已连接通道的工作模式，key 为通道 privilege。 */

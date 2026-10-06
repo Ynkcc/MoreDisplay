@@ -8,7 +8,10 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import me.ynk.moredisplay.core.ConnectionStatus
@@ -69,8 +72,15 @@ class DisplayRepository : IDisplayRepository {
     /** privilege → 已连接槽位。仅在 [slotDispatcher] 单线程内读写。 */
     private val slots = mutableMapOf<Privilege, Slot>()
 
-    /** displayId → 创建它的通道 privilege。仅在 [slotDispatcher] 单线程内读写。 */
-    private val origin = mutableMapOf<Int, Privilege>()
+    /** displayId → 创建它的通道 privilege。仅在 [slotDispatcher] 单线程内写，读取走 StateFlow。 */
+    private val origin = MutableStateFlow<Map<Int, Privilege>>(emptyMap())
+
+    override val displaysByChannel: StateFlow<Map<Privilege, List<DisplayInfo>>> =
+        combine(displays, origin) { disp, orig ->
+            disp.entries
+                .groupBy({ orig[it.key] ?: Privilege.NONE }) { it.value }
+                .mapValues { e -> e.value.sortedBy { it.displayId } }
+        }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
     override val connectionStatus: StateFlow<ConnectionStatus> = status
     override val connectionError: StateFlow<String?> = error
@@ -135,7 +145,7 @@ class DisplayRepository : IDisplayRepository {
     private suspend fun dropSlot(privilege: Privilege, reason: String) = withContext(slotDispatcher) {
         val slot = slots.remove(privilege) ?: return@withContext
         runCatching { slot.transport.close() }
-        origin.entries.removeAll { it.value == privilege }
+        origin.value = origin.value.filterValues { it != privilege }
         publishSlots()
         Log.w(TAG, "slot $privilege dropped: $reason, remaining=${slots.keys}")
         if (slots.isEmpty()) status.value = ConnectionStatus.DISCONNECTED
@@ -144,7 +154,7 @@ class DisplayRepository : IDisplayRepository {
     override suspend fun disconnect(): Result<Unit> = withContext(slotDispatcher) {
         slots.values.forEach { runCatching { it.transport.close() } }
         slots.clear()
-        origin.clear()
+        origin.value = emptyMap()
         publishSlots()
         status.value = ConnectionStatus.DISCONNECTED
         Result.success(Unit)
@@ -160,7 +170,7 @@ class DisplayRepository : IDisplayRepository {
             val response = sendOn(slot) { RpcRequest.CreateDisplay(nextId(), spec) }
             val info = (response as? RpcResponse.DisplayResult)?.info
             if (info != null) {
-                origin[info.displayId] = slot.provider.privilege
+                origin.value = origin.value + (info.displayId to slot.provider.privilege)
                 Result.success(info)
             } else {
                 response.asError("createDisplay")
@@ -172,7 +182,7 @@ class DisplayRepository : IDisplayRepository {
         for (slot in orderedSlotsFor(displayId)) {
             val response = sendOn(slot) { RpcRequest.HoldDisplay(nextId(), displayId) }
             (response as? RpcResponse.DisplayResult)?.info?.let { info ->
-                origin[displayId] = slot.provider.privilege
+                origin.value = origin.value + (displayId to slot.provider.privilege)
                 return@withContext Result.success(info)
             }
             last = response
@@ -185,7 +195,7 @@ class DisplayRepository : IDisplayRepository {
         for (slot in orderedSlotsFor(displayId)) {
             val response = sendOn(slot) { RpcRequest.RemoveDisplay(nextId(), displayId) }
             if (response is RpcResponse.Ok) {
-                origin.remove(displayId)
+                origin.value = origin.value - displayId
                 return@withContext Result.success(Unit)
             }
             last = response
@@ -199,17 +209,19 @@ class DisplayRepository : IDisplayRepository {
             return@withContext Result.failure(IllegalStateException("not connected"))
         }
         val merged = LinkedHashMap<Int, DisplayInfo>()
+        val origins = LinkedHashMap<Int, Privilege>()
         val errors = mutableListOf<String>()
         for (slot in slots.values.sortedByDescending { it.provider.priority }) {
             when (val response = sendOn(slot) { RpcRequest.ListDisplays(nextId()) }) {
                 is RpcResponse.DisplayList -> response.displays.forEach {
                     merged[it.displayId] = it
-                    origin[it.displayId] = slot.provider.privilege
+                    origins[it.displayId] = slot.provider.privilege
                 }
                 is RpcResponse.Error -> errors.add("${slot.provider.privilege}: [${response.code}] ${response.message}")
                 else -> errors.add("${slot.provider.privilege}: bad response $response")
             }
         }
+        if (origins.isNotEmpty()) origin.value = origins
         if (merged.isEmpty() && errors.isNotEmpty()) {
             Result.failure(IllegalStateException("listDisplays failed on all slots: $errors"))
         } else {
@@ -217,9 +229,7 @@ class DisplayRepository : IDisplayRepository {
         }
     }
 
-    override fun displayOrigin(displayId: Int): Privilege? = runBlocking { withContext(slotDispatcher) {
-        origin[displayId]
-    } }
+    override fun displayOrigin(displayId: Int): Privilege? = origin.value[displayId]
 
     // ---- 策略类操作：只在 system_server 守护（LSPosed 槽位）内生效 ----
 
@@ -285,7 +295,7 @@ class DisplayRepository : IDisplayRepository {
 
     /** remove/hold 的路由顺序：已知归属的槽位优先，其余按优先级兜底。 */
     private fun orderedSlotsFor(displayId: Int): List<Slot> {
-        val known = origin[displayId]?.let { slots[it] }
+        val known = origin.value[displayId]?.let { slots[it] }
         val rest = slots.values.filter { it !== known }.sortedByDescending { it.provider.priority }
         return if (known != null) listOf(known) + rest else rest
     }
