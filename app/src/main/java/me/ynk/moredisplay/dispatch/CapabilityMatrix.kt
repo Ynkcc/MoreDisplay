@@ -16,7 +16,9 @@ object CapabilityMatrix {
             // 只有 hook 进 system_server 才能按调用方 uid 裁剪 DMS 返回值。
             perUidDisplayVisibility = true,
             // 也只有 hook 进 system_server 才能在 createVirtualDisplayInternal 里改写 mirror 源。
-            recordRedirection = true
+            recordRedirection = true,
+            // 同理：hook 进 system_server 才能在无障碍连接处改写手势目标屏。
+            accessibilityRedirection = true
         )
         Privilege.ROOT, Privilege.SHELL_SHIZUKU -> DaemonCapabilities(
             maxDisplayCount = Int.MAX_VALUE,

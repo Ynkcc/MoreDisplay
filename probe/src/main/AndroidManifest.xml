@@ -26,6 +26,20 @@
             android:name=".CaptureForegroundService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- 需求 C：无障碍手势探测服务（不被注入，仅用公开 API）。 -->
+        <service
+            android:name=".ProbeAccessibilityService"
+            android:exported="false"
+            android:label="MoreDisplay Probe A11y"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/probe_accessibility_service" />
+        </service>
     </application>
 
 </manifest>

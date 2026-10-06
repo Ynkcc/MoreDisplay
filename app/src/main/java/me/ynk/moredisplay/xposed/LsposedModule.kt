@@ -22,7 +22,8 @@ import java.util.concurrent.ConcurrentHashMap
  *    让应用可以把自己启动到我们托管的虚拟屏上；
  * 3. 按调用方 uid 过滤屏幕可见性（列表 / 点名 / 事件三处，见
  *    [installDisplayVisibilityHooks]），**不 Hook 目标 App**；
- * 4. 按调用方 uid 把录屏的 mirror 源改写到托管屏（见 [installRecordMirrorHooks]）。
+ * 4. 按调用方 uid 把录屏的 mirror 源改写到托管屏（见 [installRecordMirrorHooks]）；
+ * 5. 按服务包名把无障碍手势改写到托管屏（见 [installAccessibilityRedirectHooks]）。
  */
 class LsposedModule : XposedModule() {
 
@@ -33,6 +34,9 @@ class LsposedModule : XposedModule() {
 
         /** Executable → 其中 `String` 类型形参的下标，避免在高频 provider 调用上重复反射。 */
         private val stringArgIndexes = ConcurrentHashMap<Executable, IntArray>()
+
+        /** provider call 采样计数（ROM 差异诊断）。 */
+        private val transportCalls = java.util.concurrent.atomic.AtomicLong()
     }
 
     override fun onSystemServerStarting(param: XposedModuleInterface.SystemServerStartingParam) {
@@ -42,7 +46,10 @@ class LsposedModule : XposedModule() {
         hookLaunchPermission(param.classLoader)
         installDisplayVisibilityHooks(param.classLoader)
         installRecordMirrorHooks(param.classLoader)
-        DisplayPolicyRegistry.statsProvider = { "${visibilityHookStats()} | ${recordMirrorHookStats()}" }
+        installAccessibilityRedirectHooks(param.classLoader)
+        DisplayPolicyRegistry.statsProvider = {
+            "${visibilityHookStats()} | ${recordMirrorHookStats()} | ${accessibilityHookStats()}"
+        }
     }
 
     override fun onPackageReady(param: XposedModuleInterface.PackageReadyParam) {
@@ -93,41 +100,72 @@ class LsposedModule : XposedModule() {
     }.getOrNull()
 
     /**
-     * Hook 所有进程内 provider 调用的统一入口 `ContentProvider$Transport#call`。
+     * Hook 所有进程内 provider 调用的统一入口，多级备选（ROM 差异适配）：
      *
-     * 该类位于 boot classpath，因此在 system_server 中可直接加载；
-     * 相比 Hook `SettingsProvider#call` 免去了“拿到 provider APK 的 ClassLoader”这一步。
+     * 1. `ContentProvider$Transport#call` —— AOSP binder 入口（POCO/AOSP 类 ROM 命中）；
+     * 2. `ContentProvider#call(String,String,String,Bundle)` —— Transport 内部转发的
+     *    `mInterface.call`（ColorOS 上 Transport.call 疑似被 AOT 内联导致 hook 落空，走这里）；
+     * 3. `ContentProvider#call(String,String,Bundle)` —— SDK 入口兜底（若子类未覆盖才有效）。
+     *
      * 只有 method 等于 [ProviderRpc.METHOD] 的调用被接管，其余原样放行。
+     * 命中点用采样日志标记（`PROVIDER sample ... exe=...`），便于按 ROM 定位生效层。
      */
     private fun hookProviderRpc() {
+        val targets = mutableListOf<java.lang.reflect.Method>()
         runCatching {
             val transport = Class.forName(TRANSPORT_CLASS)
-            val targets = transport.declaredMethods.filter {
+            targets += transport.declaredMethods.filter {
                 it.name == "call" && it.parameterTypes.lastOrNull() == Bundle::class.java
             }
-            targets.forEach { method ->
-                hook(method).intercept { chain ->
-                    val indexes = stringArgIndexes.getOrPut(chain.executable) {
-                        chain.executable.parameterTypes.mapIndexedNotNull { i, type ->
-                            if (type == String::class.java) i else null
-                        }.toIntArray()
+        }.onFailure { log(Log.WARN, TAG, "load $TRANSPORT_CLASS failed", it) }
+        runCatching {
+            val provider = Class.forName("android.content.ContentProvider")
+            targets += provider.declaredMethods.filter {
+                it.name == "call" && it.parameterTypes.lastOrNull() == Bundle::class.java
+            }
+        }.onFailure { log(Log.WARN, TAG, "load ContentProvider failed", it) }
+        if (targets.isEmpty()) {
+            log(Log.ERROR, TAG, "hookProviderRpc: no target methods found")
+            return
+        }
+        targets.forEach { method ->
+            hook(method).intercept { chain ->
+                val indexes = stringArgIndexes.getOrPut(chain.executable) {
+                    chain.executable.parameterTypes.mapIndexedNotNull { i, type ->
+                        if (type == String::class.java) i else null
+                    }.toIntArray()
+                }
+                val isRpc = indexes.any { chain.getArg(it) == ProviderRpc.METHOD }
+                if (!isRpc) {
+                    // 采样诊断：确认各层 hook 是否真的被触发（ROM 差异排查用）。
+                    val n = transportCalls.incrementAndGet()
+                    if (n <= 3 || n % 500 == 0L) {
+                        val args = indexes.map { idx -> chain.getArg(idx) as? String }
+                        Log.i(
+                            TAG,
+                            "PROVIDER sample#$n exe=${chain.executable.declaringClass.simpleName}" +
+                                "#${chain.executable.name}/${chain.executable.parameterCount} strings=$args"
+                        )
                     }
-                    val isRpc = indexes.any { chain.getArg(it) == ProviderRpc.METHOD }
-                    if (!isRpc) {
-                        chain.proceed()
+                    chain.proceed()
+                } else {
+                    val engine = SystemDaemon.engine
+                    val extras = chain.getArg(chain.executable.parameterTypes.size - 1) as? Bundle
+                    if (engine == null) {
+                        ProviderRpc.errorBundle(-2, "daemon engine not ready in system_server")
                     } else {
-                        val engine = SystemDaemon.engine
-                        val extras = chain.getArg(chain.executable.parameterTypes.size - 1) as? Bundle
-                        if (engine == null) {
-                            ProviderRpc.errorBundle(-2, "daemon engine not ready in system_server")
-                        } else {
-                            ProviderRpc.handle(engine, extras)
-                        }
+                        Log.i(TAG, "RPC hit on ${chain.executable.declaringClass.simpleName}#${chain.executable.name}")
+                        ProviderRpc.handle(engine, extras)
                     }
                 }
             }
-            log(Log.INFO, TAG, "provider rpc hooks installed on ${targets.size} overload(s)")
-        }.onFailure { log(Log.ERROR, TAG, "hookProviderRpc failed", it) }
+        }
+        log(
+            Log.INFO,
+            TAG,
+            "provider rpc hooks installed on ${targets.size} target(s): " +
+                targets.joinToString { "${it.declaringClass.simpleName}#${it.name}/${it.parameterCount}" }
+        )
     }
 
     private fun hookLaunchPermission(classLoader: ClassLoader) {

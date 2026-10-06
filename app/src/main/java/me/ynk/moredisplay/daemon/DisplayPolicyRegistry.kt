@@ -22,6 +22,9 @@ object DisplayPolicyRegistry {
 
     const val NO_POLICY_UID = -1
 
+    /** 多用户 uid 布局：uid = userId * 100000 + appId。 */
+    private const val PER_USER_RANGE = 100000
+
     /**
      * 默认屏（`Display.DEFAULT_DISPLAY`）**永不过滤**。
      *
@@ -90,6 +93,25 @@ object DisplayPolicyRegistry {
     fun recordDisplayIdFor(uid: Int): Int? {
         if (!isAppUid(uid)) return null
         return get(uid)?.recordDisplayId
+    }
+
+    /**
+     * 需求 C：该包名（无障碍服务所在包）的无障碍操作目标屏。
+     *
+     * 无障碍连接对象上没有 uid，只有服务的 `ComponentName` 和 `mUserId`，
+     * 所以按「包名 + 服务所在用户」匹配（`DisplayPolicy.packageName` +
+     * 策略 uid 编码的 userId，即 `uid / 100000`）。多用户下同一包名会为每个
+     * 用户各安装一份（uid 不同），必须带 userId 消歧。
+     *
+     * 只在配置了 `operatedDisplayId` 时返回非空；否则 null（=不干预）。
+     */
+    fun operatedDisplayIdForPackage(packageName: String?, userId: Int): Int? {
+        if (packageName.isNullOrEmpty()) return null
+        return synchronized(lock) {
+            policies.values.firstOrNull {
+                it.packageName == packageName && it.uid / PER_USER_RANGE == userId
+            }?.operatedDisplayId
+        }
     }
 
     /** 该 uid 是否应当看到该 displayId。 */

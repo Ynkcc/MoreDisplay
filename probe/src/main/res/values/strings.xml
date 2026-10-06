@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="probe_a11y_description">MoreDisplay 需求 C 探测：按广播指令派发手势</string>
+</resources>

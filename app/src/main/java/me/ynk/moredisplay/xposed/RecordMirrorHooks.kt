@@ -1,5 +1,6 @@
 package me.ynk.moredisplay.xposed
 
+import android.os.Binder
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
@@ -12,9 +13,11 @@ import java.util.concurrent.atomic.AtomicLong
  * 需求 B：录屏屏替换 —— 目标 App 录屏时实际录到的是托管虚拟屏，而不是默认屏。
  *
  * ## 落点（真机 services.jar dexdump 核实，Android 16 / SDK 36）
- * `DisplayManagerService#createVirtualDisplayInternal(Landroid/hardware/display/VirtualDisplayConfig;Landroid/hardware/display/IVirtualDisplayCallback;Landroid/media/projection/IMediaProjection;Landroid/companion/virtual/IVirtualDevice;Landroid/window/DisplayWindowPolicyController;Ljava/lang/String;I)I`
- * （`PUBLIC FINAL`，7 参，第 7 参就是 callingUid —— `BinderService.createVirtualDisplay` 在
- * `Binder.getCallingUid()` 之后把它传进来）。
+ * `DisplayManagerService#createVirtualDisplayInternal(...)`。
+ * - AOSP（Android 14+）：7 参，末位是 callingUid —— `BinderService.createVirtualDisplay` 在
+ *   `Binder.getCallingUid()` 之后把它传进来；
+ * - ColorOS（Android 16 实测）：6 参，砍掉了 callingUid —— 此时在 proceed 前取
+ *   `Binder.getCallingUid()`（该点在 clearCallingIdentity 之前，身份仍有效）。
  *
  * ## 为什么改 `mDisplayIdToMirror` 而不是换 Surface
  * 全链路只有一个 mirror 源真值：`VirtualDisplayConfig.mDisplayIdToMirror`（`PRIVATE FINAL int`）。实测它的两个消费者：
@@ -70,17 +73,21 @@ fun XposedModule.installRecordMirrorHooks(classLoader: ClassLoader) {
         mirrorField = configClass.getDeclaredField("mDisplayIdToMirror").apply { isAccessible = true }
         flagsField = configClass.getDeclaredField("mFlags").apply { isAccessible = true }
         val clz = classLoader.loadClass("com.android.server.display.DisplayManagerService")
+        // AOSP（Android 14+）：7 参，末位是 callingUid；
+        // ColorOS/others：6 参（砍掉 callingUid），此时在 proceed 前取 Binder.getCallingUid()。
         val method = clz.declaredMethods.firstOrNull {
             it.name == "createVirtualDisplayInternal" &&
-                it.parameterCount == 7 &&
                 it.parameterTypes[0].name == "android.hardware.display.VirtualDisplayConfig" &&
-                it.parameterTypes[6] == java.lang.Integer.TYPE
+                (it.parameterCount == 7 && it.parameterTypes[6] == java.lang.Integer.TYPE ||
+                    it.parameterCount == 6)
         } ?: throw NoSuchMethodException(
-            "DisplayManagerService.createVirtualDisplayInternal(VirtualDisplayConfig,I...,String,I)"
+            "DisplayManagerService.createVirtualDisplayInternal(VirtualDisplayConfig,...)"
         )
+        val uidArgIndex = if (method.parameterCount == 7) 6 else -1
         hook(method).intercept { chain ->
             val config = chain.getArg(0)
-            val uid = chain.getArg(6) as? Int
+            val uid = (uidArgIndex.takeIf { it >= 0 }?.let { chain.getArg(it) } as? Int)
+                ?: Binder.getCallingUid()
             if (config != null && uid != null) {
                 runCatching { tryRedirectMirror(this, chain, config, uid) }
                     .onFailure { Log.e(TAG, "mirror redirect failed uid=$uid", it) }
@@ -92,7 +99,7 @@ fun XposedModule.installRecordMirrorHooks(classLoader: ClassLoader) {
             Log.INFO,
             TAG,
             "hooked ${method.declaringClass.name}#${method.name}${method.parameterTypes.contentToString()} " +
-                "(mirrorField=${mirrorField != null}, flagsField=${flagsField != null})"
+                "(params=${method.parameterCount}, mirrorField=${mirrorField != null}, flagsField=${flagsField != null})"
         )
     }.onFailure {
         recordHookInstalled = "false"

@@ -6,6 +6,7 @@ import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
+import android.view.MotionEvent
 import android.view.Surface
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -145,6 +146,13 @@ class ProbeActivity : Activity() {
         runCatching { displayManager.unregisterDisplayListener(listener) }
         releaseCapture("onDestroy")
         super.onDestroy()
+    }
+
+    /** 需求 C 验收：记录实际到达本窗口的触摸（含 displayId / 坐标）。 */
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        Log.i(TAG, "TOUCH display=${display?.displayId} action=${event.actionMasked} " +
+            "x=${event.x} y=${event.y}")
+        return super.dispatchTouchEvent(event)
     }
 
     // ------------------------------------------------------------------ 可见性探测

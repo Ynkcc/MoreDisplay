@@ -40,7 +40,7 @@ data class DaemonCapabilities(
     val perUidDisplayVisibility: Boolean = false,
     /** 需求 B（未实现）：录屏屏替换。 */
     val recordRedirection: Boolean = false,
-    /** 需求 C（未实现）：无障碍屏替换。 */
+    /** 需求 C：无障碍屏替换（LSPosed 模式下已实现，见 AccessibilityRedirectHooks）。 */
     val accessibilityRedirection: Boolean = false
 ) {
     fun supportsFlags(flags: Int): Boolean = flags and supportedFlags.inv() == 0
