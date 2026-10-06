@@ -121,10 +121,13 @@ class DisplayRepository : IDisplayRepository {
             if (slots.containsKey(provider.privilege)) continue
             provider.startDaemon().flatMapCatching { provider.connectTransport() }
                 .onSuccess { t ->
+                    // 能力以 daemon 实测为准（特权 flag 因 ROM 权限而异），失败则回退静态矩阵。
+                    val capabilities = queryCapabilities(t)
+                        ?: CapabilityMatrix.forPrivilege(provider.privilege)
                     val workMode = WorkModeInfo(
                         provider.privilege,
                         locationOf(provider.privilege),
-                        CapabilityMatrix.forPrivilege(provider.privilege)
+                        capabilities
                     )
                     slots[provider.privilege] = Slot(provider, t, workMode)
                     t.onDisconnected {
@@ -283,6 +286,12 @@ class DisplayRepository : IDisplayRepository {
             Log.e(TAG, "rpc call failed via ${slot.provider.privilege}", e)
             RpcResponse.Error(0, -1, "rpc failed: ${e.message}")
         }
+
+    private suspend fun queryCapabilities(transport: Transport): DaemonCapabilities? {
+        val response = runCatching { transport.send(RpcRequest.GetCapabilities(nextId())) }
+            .getOrElse { return null }
+        return (response as? RpcResponse.Capabilities)?.capabilities
+    }
 
     /** 指定 privilege 的槽位；null 则取最高优先级的已连接槽位。指定了但未连接时返回 null（不回退）。 */
     private fun slotFor(privilege: Privilege?): Slot? = when (privilege) {

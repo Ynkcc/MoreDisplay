@@ -4,7 +4,9 @@ import android.hardware.display.DisplayManager
 import android.util.Log
 import me.ynk.moredisplay.core.DisplayInfo
 import me.ynk.moredisplay.core.DisplaySpec
+import me.ynk.moredisplay.core.VirtualDisplayFlags
 import me.ynk.moredisplay.dispatch.CapabilityMatrix
+import me.ynk.moredisplay.dispatch.CapabilityMatrix.TRUSTED_GOVERNED_FLAGS
 import me.ynk.moredisplay.dispatch.AndroidVersions
 
 class ShellDisplayEngine(
@@ -74,18 +76,73 @@ class ShellDisplayEngine(
     private val managed = linkedMapOf<Int, DisplayInfo>()
     private val virtualDisplays = linkedMapOf<Int, android.hardware.display.VirtualDisplay>()
 
-    override val capabilities = CapabilityMatrix.forPrivilege(me.ynk.moredisplay.core.Privilege.SHELL_SHIZUKU)
+    // 特权 flag（TRUSTED/OWN_DISPLAY_GROUP/ALWAYS_UNLOCKED/SHOULD_SHOW_SYSTEM_DECORATIONS）
+    // 由 DMS 按调用方权限逐项校验。uid 0 全部放行；uid 2000 取决于 ROM 是否给
+    // com.android.shell 授予 ADD_TRUSTED_DISPLAY 等权限，因此启动时实测一次。
+    private val hasPrivilege: (String) -> Boolean = { permission ->
+        android.os.Process.myUid() == 0 || runCatching {
+            context.checkPermission(
+                permission, android.os.Process.myPid(), android.os.Process.myUid()
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }.getOrDefault(false)
+    }
 
-    override fun createDisplay(spec: DisplaySpec): DisplayInfo {
-        val flags = CapabilityMatrix.flagsForSdk(spec.flags)
-        val vd = checkNotNull(manager) { "DisplayManager unavailable" }.createVirtualDisplay(
-            spec.name, spec.width, spec.height, spec.densityDpi, null, flags
-        ) ?: throw IllegalStateException("createVirtualDisplay returned null for $spec")
-        val info = DisplayInfo(vd.display.displayId, spec)
+    override val capabilities =
+        CapabilityMatrix.shellPrivilegeCapabilities(hasPrivilege)
+
+    override fun createDisplay(request: DisplaySpec): DisplayInfo {
+        var flags = CapabilityMatrix.normalizeFlagCombination(
+            CapabilityMatrix.flagsForSdk(request.flags)
+        )
+        // 与 DMS 行为对齐：非 TRUSTED 的屏 sys-decor 会被静默剔除，直接上报真实值。
+        if (flags and VirtualDisplayFlags.TRUSTED == 0) {
+            flags = flags and VirtualDisplayFlags.SHOULD_SHOW_SYSTEM_DECORATIONS.inv()
+        }
+        // 探测已覆盖绝大多数场景；SecurityException 兜底做逐级降级，避免整次 create 失败。
+        var vd: android.hardware.display.VirtualDisplay? = null
+        repeat(4) { attempt ->
+            if (vd != null) return@repeat
+            try {
+                vd = checkNotNull(manager) { "DisplayManager unavailable" }.createVirtualDisplay(
+                    request.name, request.width, request.height, request.densityDpi, null, flags
+                )
+            } catch (e: SecurityException) {
+                val downgraded = downgradePrivilegedFlags(flags, e)
+                if (downgraded == flags || attempt == 3) throw e
+                Log.w(
+                    TAG, "flags 0x${Integer.toHexString(flags)} rejected by DMS (${e.message}), " +
+                        "retry with 0x${Integer.toHexString(downgraded)}"
+                )
+                flags = downgraded
+            }
+        }
+        val display = checkNotNull(vd) { "createVirtualDisplay returned null for $request" }
+        val spec = request.copy(flags = flags)
+        val info = DisplayInfo(display.display.displayId, spec)
         managed[info.displayId] = info
-        virtualDisplays[info.displayId] = vd
+        virtualDisplays[info.displayId] = display
         Log.i(TAG, "created displayId=${info.displayId} ${spec.width}x${spec.height}@${spec.densityDpi} flags=0x${Integer.toHexString(flags)}")
         return info
+    }
+
+    /** 按异常信息剔除被拒绝的特权 flag；消息无法判读时一次性剔除全部特权 flag。 */
+    private fun downgradePrivilegedFlags(flags: Int, e: SecurityException): Int {
+        val msg = e.message ?: return flags and TRUSTED_GOVERNED_FLAGS.inv()
+        var next = flags
+        when {
+            msg.contains("ADD_TRUSTED_DISPLAY") ->
+                next = next and (VirtualDisplayFlags.TRUSTED or VirtualDisplayFlags.OWN_DISPLAY_GROUP).inv()
+            msg.contains("ADD_ALWAYS_UNLOCKED_DISPLAY") ->
+                next = next and VirtualDisplayFlags.ALWAYS_UNLOCKED.inv()
+            msg.contains("INTERNAL_SYSTEM_WINDOW") ->
+                next = next and VirtualDisplayFlags.SHOULD_SHOW_SYSTEM_DECORATIONS.inv()
+            else -> next = flags and TRUSTED_GOVERNED_FLAGS.inv()
+        }
+        // TRUSTED 被剔除后 sys-decor 必然失效，一并剔除。
+        if (next and VirtualDisplayFlags.TRUSTED == 0) {
+            next = next and VirtualDisplayFlags.SHOULD_SHOW_SYSTEM_DECORATIONS.inv()
+        }
+        return next
     }
 
     override fun holdDisplay(displayId: Int): DisplayInfo? {

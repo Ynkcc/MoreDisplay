@@ -1,7 +1,7 @@
 package me.ynk.moredisplay.core
 
 object DaemonProtocol {
-    const val DAEMON_VERSION = 9
+    const val DAEMON_VERSION = 12
 }
 
 sealed interface RpcRequest {

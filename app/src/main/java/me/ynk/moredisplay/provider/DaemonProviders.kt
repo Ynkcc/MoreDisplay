@@ -8,6 +8,7 @@ import android.os.IBinder
 import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import me.ynk.moredisplay.App
@@ -65,22 +66,54 @@ class ShizukuDaemonProvider : DaemonProvider {
     }
 
     override suspend fun startDaemon(): Result<Unit> = runCatching {
-        if (remote != null) {
+        val alive = runCatching { remote?.asBinder()?.isBinderAlive == true }.getOrDefault(false)
+        if (alive) {
             Log.d(TAG, "shizuku daemon already bound")
             return@runCatching
         }
         val context: Context = App.context
-        val args = Shizuku.UserServiceArgs(
+        val args = userServiceArgs ?: Shizuku.UserServiceArgs(
             ComponentName(context.packageName, DaemonUserService::class.java.name)
         )
             .daemon(true)
             .processNameSuffix("daemon")
             .version(2)
-        userServiceArgs = args
+            .also { userServiceArgs = it }
 
-        fun newConnection(): Pair<CompletableDeferred<IDaemonRpc>, ServiceConnection> {
+        detachLocked()
+
+        remote = bind(args)
+        if (!verifyDaemonVersion()) {
+            Log.w(TAG, "daemon version mismatch, destroying stale daemon and rebinding")
+            detachLocked()
+            remote = bind(args)
+            verifyDaemonVersion()
+        }
+        Log.i(TAG, "shizuku daemon bound, binder alive=${remote?.asBinder()?.isBinderAlive}")
+    }
+
+    /** 释放当前 daemon 连接：销毁远端服务并解绑，容忍重复调用与死 binder。 */
+    private suspend fun detachLocked() {
+        runCatching { remote?.destroy() }
+            .onFailure { Log.d(TAG, "destroy stale daemon: ${it.message}") }
+        remote = null
+        val oldConnection = serviceConnection
+        val oldArgs = userServiceArgs
+        serviceConnection = null
+        if (oldConnection != null && oldArgs != null) {
+            withContext(Dispatchers.Main) {
+                runCatching { Shizuku.unbindUserService(oldArgs, oldConnection, false) }
+                    .onFailure { Log.d(TAG, "unbindUserService stale connection: ${it.message}") }
+            }
+        }
+    }
+
+    /** 绑定 user service，瞬时失败按 500ms/1s 退避重试两次。 */
+    private suspend fun bind(args: Shizuku.UserServiceArgs): IDaemonRpc {
+        repeat(3) { attempt ->
             val connected = CompletableDeferred<IDaemonRpc>()
-            val connection = object : ServiceConnection {
+            lateinit var self: ServiceConnection
+            self = object : ServiceConnection {
                 override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                     if (binder == null) {
                         connected.completeExceptionally(IllegalStateException("shizuku returned null binder for $name"))
@@ -91,30 +124,27 @@ class ShizukuDaemonProvider : DaemonProvider {
 
                 override fun onServiceDisconnected(name: ComponentName?) {
                     Log.w(TAG, "shizuku daemon service disconnected: $name")
-                    remote = null
+                    // 旧连接的断开回调可能在新连接建立后才触发，仅当断开的
+                    // 是当前登记的连接时才清空 remote，避免误伤新绑定。
+                    if (self === serviceConnection) remote = null
                 }
             }
-            return connected to connection
-        }
-
-        suspend fun bind(): IDaemonRpc {
-            val (connected, connection) = newConnection()
-            serviceConnection = connection
-            withContext(Dispatchers.Main) {
-                Shizuku.bindUserService(args, connection)
+            try {
+                withContext(Dispatchers.Main) {
+                    Shizuku.bindUserService(args, self)
+                }
+                return withTimeout(BIND_TIMEOUT_MS) { connected.await() }
+            } catch (e: Exception) {
+                Log.w(TAG, "bind attempt ${attempt + 1} failed", e)
+                withContext(Dispatchers.Main) {
+                    runCatching { Shizuku.unbindUserService(args, self, false) }
+                        .onFailure { Log.d(TAG, "unbindUserService failed attempt: ${it.message}") }
+                }
+                if (attempt == 2) throw e
+                delay(500L * (attempt + 1))
             }
-            return withTimeout(BIND_TIMEOUT_MS) { connected.await() }
         }
-
-        remote = bind()
-        if (!verifyDaemonVersion()) {
-            Log.w(TAG, "daemon version mismatch, destroying stale daemon and rebinding")
-            remote?.destroy()
-            remote = null
-            remote = bind()
-            verifyDaemonVersion()
-        }
-        Log.i(TAG, "shizuku daemon bound, binder alive=${remote?.asBinder()?.isBinderAlive}")
+        error("bind: unreachable")
     }
 
     private fun verifyDaemonVersion(): Boolean {
@@ -141,15 +171,8 @@ class ShizukuDaemonProvider : DaemonProvider {
     }
 
     override suspend fun stopDaemon(): Result<Unit> = runCatching {
-        val args = userServiceArgs ?: return@runCatching
-        runCatching { remote?.destroy() }
-            .onFailure { Log.w(TAG, "destroy daemon service failed: ${it.message}") }
-        withContext(Dispatchers.Main) {
-            runCatching { Shizuku.unbindUserService(args, serviceConnection, false) }
-                .onFailure { Log.w(TAG, "unbindUserService failed: ${it.message}") }
-        }
-        remote = null
-        serviceConnection = null
+        if (userServiceArgs == null) return@runCatching
+        detachLocked()
         userServiceArgs = null
     }
 

@@ -63,7 +63,9 @@ class SystemDisplayEngine(
         if (!capabilities.supportsFlags(spec.flags)) {
             throw SecurityException("unsupported flags 0x${Integer.toHexString(spec.flags)}")
         }
-        val flags = CapabilityMatrix.flagsForSdk(spec.flags)
+        val flags = CapabilityMatrix.normalizeFlagCombination(
+            CapabilityMatrix.flagsForSdk(spec.flags)
+        )
 
         val global = Class.forName(GLOBAL_CLASS).getMethod("getInstance").invoke(null)
             ?: throw IllegalStateException("DisplayManagerGlobal unavailable (is the display service up?)")
