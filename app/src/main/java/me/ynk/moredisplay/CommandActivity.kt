@@ -77,7 +77,11 @@ class CommandActivity : Activity() {
 
     private fun execute(action: String): String = runBlocking {
         val repo = App.displays()
-        repo.connect().getOrElse { throw IllegalStateException("connect failed: ${it.message}", it) }
+        // shizuku-permit 用于获取权限本身，不能依赖 connect（connect 需要权限），
+        // 否则在权限未授予时永远弹不出授权对话框（鸡生蛋问题）。
+        if (action != ACTION_SHIZUKU_PERMIT) {
+            repo.connect().getOrElse { throw IllegalStateException("connect failed: ${it.message}", it) }
+        }
         when (action) {
             ACTION_CREATE -> {
                 val spec = DisplaySpec(
@@ -169,7 +173,11 @@ class CommandActivity : Activity() {
                 "uid=$uid visible displays: $ids"
             }
             ACTION_SHIZUKU_PERMIT -> {
-                if (rikka.shizuku.Shizuku.getVersion() < 11) {
+                if (!rikka.shizuku.Shizuku.pingBinder()) {
+                    // server 未运行或本进程尚未收到 binder；不给提示会直接抛
+                    // "binder haven't been received"，难以定位。
+                    "shizuku server not running (start via adb: libshizuku.so, or from the Shizuku app)"
+                } else if (rikka.shizuku.Shizuku.getVersion() < 11) {
                     "shizuku server too old, upgrade shizuku"
                 } else if (rikka.shizuku.Shizuku.checkSelfPermission() ==
                     android.content.pm.PackageManager.PERMISSION_GRANTED
