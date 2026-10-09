@@ -53,6 +53,7 @@ class ProbeActivity : Activity() {
         const val TASK_OWN = "own"
         const val TASK_RELEASE = "release"
         const val TASK_DUMP = "dump"
+        const val TASK_INFO = "info"
 
         private const val MAX_GUESS = 12
         private const val REQ_PROJECTION = 0x501
@@ -110,11 +111,15 @@ class ProbeActivity : Activity() {
             button("dump mFlags") { dumpFlags() },
             button("清屏日志") { runCatching { Log.i(TAG, "--- marker ---") }; lines.clear(); render() }
         )
+        val row4 = row(
+            button("设备信息") { dumpDevices() }
+        )
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(row1)
             addView(row2)
             addView(row3)
+            addView(row4)
             addView(
                 ScrollView(this@ProbeActivity).apply { addView(output) },
                 LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
@@ -141,6 +146,7 @@ class ProbeActivity : Activity() {
             TASK_OWN -> startOwnContentProbe()
             TASK_RELEASE -> releaseCapture("task")
             TASK_DUMP -> dumpFlags()
+            TASK_INFO -> dumpDevices()
             else -> record("unknown task: $task")
         }
     }
@@ -420,6 +426,89 @@ class ProbeActivity : Activity() {
         (0..31).filter { flags and (1 shl it) != 0 }
             .joinToString("|") { virtualFlagNames.getOrNull(it) ?: "bit$it" }
             .ifEmpty { "0" }
+
+    // ------------------------------------------------------------------ DisplayDeviceInfo 解析
+
+    /**
+     * 解析 `dumpsys display` 里每个显示设备的 `DisplayDeviceInfo` 行。
+     *
+     * 诊断要点：虚拟屏**没有输出 Surface 时 `state` 是 `OFF`** —— SurfaceFlinger 不为它做合成，
+     * 屏上的 Activity 拿不到 vsync、永远不绘制，也就录不到任何内容。所以这里把
+     * state / committedState / owner / 镜像源一并列出，用来确认「屏是否真的亮着」。
+     */
+    private fun dumpDevices() {
+        val text = runCatching {
+            Runtime.getRuntime().exec(arrayOf("dumpsys", "display"))
+                .inputStream.bufferedReader().use { it.readText() }
+        }.getOrElse { record("DUMP 执行失败: $it"); return }
+        if (text.isBlank() || text.contains("Permission Denial")) {
+            record("DUMP 权限不足，请先执行: adb shell pm grant io.github.ynkcc.moredisplay.probe android.permission.DUMP")
+            return
+        }
+
+        val lines = text.lineSequence().map { it.trim() }.toList()
+        // displayId 只在 logical 层的 DisplayInfo{...} 里给出，device 层的 DisplayDeviceInfo{...}
+        // 没有它，因此先用 uniqueId 建立映射再回填。
+        val idByUnique = HashMap<String, String>()
+        for (l in lines) {
+            if (!l.contains("DisplayInfo{")) continue
+            val id = RE_LOGICAL_ID.find(l)?.groupValues?.get(1) ?: continue
+            val uq = RE_UNIQUE_SP.find(l)?.groupValues?.get(1) ?: continue
+            idByUnique[uq] = id
+        }
+        val at = lines.indices.filter { RE_DEVICE.containsMatchIn(lines[it]) }
+        record("========== DISPLAY DEVICES ==========")
+        if (at.isEmpty()) {
+            record("未解析到任何 DisplayDeviceInfo 条目")
+            record("========== DEVICES END ==========")
+            return
+        }
+        at.forEachIndexed { k, i ->
+            // mDisplayIdToMirror 落在设备行之后、下一个设备行之前，按区间回填。
+            val until = at.getOrNull(k + 1) ?: lines.size
+            val mirror = (i until until).asSequence()
+                .mapNotNull { RE_MIRROR.find(lines[it])?.groupValues?.get(1) }
+                .firstOrNull()
+            record(formatDevice(lines[i], idByUnique, mirror))
+        }
+        record("========== DEVICES END ==========")
+    }
+
+    private fun formatDevice(line: String, idByUnique: Map<String, String>, mirror: String?): String {
+        val m = RE_DEVICE.find(line) ?: return line
+        val owner = RE_OWNER.find(line)?.let { "${it.groupValues[1]}(uid ${it.groupValues[2]})" } ?: "?"
+        val flags = RE_FLAG.findAll(line).map { it.value }.distinct().joinToString("|").ifEmpty { "-" }
+        return buildString {
+            append("#").append(idByUnique[m.groupValues[2]] ?: "?").append(" ").append(m.groupValues[1])
+            append(" ").append(m.groupValues[3]).append("x").append(m.groupValues[4])
+            append(" dpi=").append(field(line, RE_DENSITY))
+            append(" ").append(field(line, RE_TYPE))
+            append(" state=").append(field(line, RE_STATE))
+                .append("(committed=").append(field(line, RE_COMMITTED)).append(")")
+            append(" touch=").append(field(line, RE_TOUCH))
+            append(" owner=").append(owner)
+            append(" mirror=").append(mirror ?: "-")
+            append(" flags=").append(flags)
+            append("\n    ").append(m.groupValues[2])
+        }
+    }
+
+    private fun field(line: String, re: Regex): String =
+        re.find(line)?.groupValues?.get(1) ?: "?"
+
+    private val RE_DEVICE =
+        Regex("""DisplayDeviceInfo\{"([^"]*)":\s*uniqueId="([^"]*)",\s*(\d+)\s*x\s*(\d+)""")
+    /** logical 层：`DisplayInfo{"name", displayId 24, ...}`。 */
+    private val RE_LOGICAL_ID = Regex("""\bdisplayId\s+(\d+)\b""")
+    private val RE_UNIQUE_SP = Regex("""\buniqueId\s+"([^"]+)"""")
+    private val RE_MIRROR = Regex("""\bmDisplayIdToMirror=(-?\d+)\b""")
+    private val RE_DENSITY = Regex("""\bdensity\s+(\d+)\b""")
+    private val RE_STATE = Regex("""\bstate\s+([A-Z_]+)\b""")
+    private val RE_COMMITTED = Regex("""\bcommittedState\s+([A-Z_]+)\b""")
+    private val RE_TYPE = Regex("""\btype\s+([A-Z_]+)\b""")
+    private val RE_TOUCH = Regex("""\btouch\s+([A-Z_]+)\b""")
+    private val RE_OWNER = Regex("""\bowner\s+(\S+)\s*\(uid\s*(\d+)\)""")
+    private val RE_FLAG = Regex("""\bFLAG_[A-Z_]+""")
 
     // ------------------------------------------------------------------ 工具
 
