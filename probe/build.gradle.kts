@@ -31,3 +31,6 @@ android {
 
 dependencies {
 }
+
+// 签名配置见根 build.gradle.kts 的 subprojects 段：不签的话产物名会是
+// probe-release-unsigned.apk，CI 里按名取不到。
