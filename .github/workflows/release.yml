@@ -23,9 +23,7 @@ jobs:
           distribution: temurin
           java-version: '25'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # 同 ci.yml：用 runner 自带 SDK，缺失组件交给 AGP 下载。
       - name: Accept SDK licenses
         run: yes | sdkmanager --licenses > /dev/null 2>&1 || true
 
@@ -76,11 +74,16 @@ jobs:
           path: out/release-notes.md
 
   # 把元数据与 APK 推到 LSPosed 官方收录仓库 Xposed-Modules-Repo/<package>。
-  # 只有配置了 LSPOSED_REPO_TOKEN（具备该仓库写权限的 PAT）时才会执行。
+  # 未配置 LSPOSED_REPO_TOKEN（具备该仓库写权限的 PAT）时整段跳过，
+  # 此时改用 scripts/publish-lsposed.sh 本地发布。
+  # 注意：secrets 上下文不能用在 job 级 if，所以判断放在步骤内。
   publish-lsposed:
     needs: release
     runs-on: ubuntu-latest
-    if: ${{ secrets.LSPOSED_REPO_TOKEN != '' }}
+    env:
+      GH_TOKEN: ${{ secrets.LSPOSED_REPO_TOKEN }}
+      VERSION_NAME: ${{ needs.release.outputs.version_name }}
+      VERSION_CODE: ${{ needs.release.outputs.version_code }}
     steps:
       - uses: actions/checkout@v4
 
@@ -100,11 +103,11 @@ jobs:
           rm -f out/MoreDisplayProbe-*.apk
 
       - name: Publish to Xposed-Modules-Repo
-        env:
-          GH_TOKEN: ${{ secrets.LSPOSED_REPO_TOKEN }}
-          VERSION_NAME: ${{ needs.release.outputs.version_name }}
-          VERSION_CODE: ${{ needs.release.outputs.version_code }}
         run: |
           set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "LSPOSED_REPO_TOKEN is not set, skipping publish to Xposed-Modules-Repo."
+            exit 0
+          fi
           ./scripts/publish-lsposed.sh "$VERSION_CODE-$VERSION_NAME" "$VERSION_NAME" \
             release-notes.md out/*.apk
