@@ -1,7 +1,13 @@
 package io.github.ynkcc.moredisplay.daemon
 
+import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.ImageReader
+import android.os.Handler
+import android.os.HandlerThread
 import android.util.Log
+import android.view.Surface
 import io.github.ynkcc.moredisplay.core.DisplayInfo
 import io.github.ynkcc.moredisplay.core.DisplaySpec
 import io.github.ynkcc.moredisplay.core.VirtualDisplayFlags
@@ -104,6 +110,28 @@ class ShellDisplayEngine(
     private val managed = linkedMapOf<Int, DisplayInfo>()
     private val virtualDisplays = linkedMapOf<Int, android.hardware.display.VirtualDisplay>()
 
+    /** displayId → 该屏的输出接收端（丢弃型 sink），见 [newSink]。 */
+    private val sinks = linkedMapOf<Int, ImageReader>()
+
+    private val sinkThread = HandlerThread("MoreDisplay-shell-sink").apply { start() }
+    private val sinkHandler = Handler(sinkThread.looper)
+
+    /**
+     * 与 [SystemDisplayEngine] 同理：`VirtualDisplayDevice` 的 state 取决于有没有输出 Surface，
+     * surface 为 null 时 `DisplayDeviceInfo.state == STATE_OFF`，SurfaceFlinger 不做合成，
+     * 屏上的 Activity 拿不到 vsync、永远不绘制，也就录不到任何内容。
+     * 这里挂一个「只接收、立刻丢弃」的 ImageReader，让屏变成 state ON。
+     */
+    private fun newSink(width: Int, height: Int): Sink {
+        val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        reader.setOnImageAvailableListener({ r ->
+            runCatching { r.acquireLatestImage()?.close() }
+        }, sinkHandler)
+        return Sink(reader, reader.surface)
+    }
+
+    private class Sink(val reader: ImageReader, val surface: Surface)
+
     // 特权 flag（TRUSTED/OWN_DISPLAY_GROUP/ALWAYS_UNLOCKED/SHOULD_SHOW_SYSTEM_DECORATIONS）
     // 由 DMS 按调用方权限逐项校验。uid 0 全部放行；uid 2000 取决于 ROM 是否给
     // com.android.shell 授予 ADD_TRUSTED_DISPLAY 等权限，因此启动时实测一次。
@@ -134,15 +162,16 @@ class ShellDisplayEngine(
         for (name in candidates) {
             val ctx = contextFor(name)
             try {
-                val (vd, effectiveFlags) = createWithFlagDowngrade(ctx, request, flags)
-                flags = effectiveFlags
+                val created = createWithFlagDowngrade(ctx, request, flags)
+                flags = created.flags
                 resolvedContext = ctx
                 val spec = request.copy(flags = flags)
-                val info = DisplayInfo(vd.display.displayId, spec)
+                val info = DisplayInfo(created.virtualDisplay.display.displayId, spec)
                 managed[info.displayId] = info
-                virtualDisplays[info.displayId] = vd
+                virtualDisplays[info.displayId] = created.virtualDisplay
+                sinks[info.displayId] = created.sink
                 Log.i(TAG, "created displayId=${info.displayId} ${spec.width}x${spec.height}@${spec.densityDpi} " +
-                    "flags=0x${Integer.toHexString(flags)} as $name (uid=$myUid)")
+                    "flags=0x${Integer.toHexString(flags)} as $name (uid=$myUid) with output sink")
                 return info
             } catch (e: SecurityException) {
                 if (e.message?.contains("packageName must match") == true) {
@@ -158,31 +187,46 @@ class ShellDisplayEngine(
         )
     }
 
+    private data class Created(
+        val virtualDisplay: VirtualDisplay,
+        val flags: Int,
+        val sink: ImageReader
+    )
+
     private fun createWithFlagDowngrade(
         ctx: android.content.Context,
         request: DisplaySpec,
         initialFlags: Int
-    ): Pair<android.hardware.display.VirtualDisplay, Int> {
+    ): Created {
         var flags = initialFlags
-        var vd: android.hardware.display.VirtualDisplay? = null
-        repeat(4) { attempt ->
-            if (vd != null) return@repeat
-            try {
-                vd = displayManagerOf(ctx).createVirtualDisplay(
-                    request.name, request.width, request.height, request.densityDpi, null, flags
+        var attempt = 0
+        while (true) {
+            val sink = newSink(request.width, request.height)
+            val vd = try {
+                displayManagerOf(ctx).createVirtualDisplay(
+                    request.name, request.width, request.height, request.densityDpi,
+                    sink.surface, flags
                 )
             } catch (e: SecurityException) {
+                runCatching { sink.reader.close() }
                 val downgraded = downgradePrivilegedFlags(flags, e)
-                if (downgraded == flags || attempt == 3) throw e
+                if (downgraded == flags || ++attempt > 3) throw e
                 Log.w(
                     TAG, "flags 0x${Integer.toHexString(flags)} rejected by DMS (${e.message}), " +
                         "retry with 0x${Integer.toHexString(downgraded)}"
                 )
                 flags = downgraded
+                continue
+            } catch (t: Throwable) {
+                runCatching { sink.reader.close() }
+                throw t
             }
+            if (vd == null) {
+                runCatching { sink.reader.close() }
+                throw IllegalStateException("createVirtualDisplay returned null for $request")
+            }
+            return Created(vd, flags, sink.reader)
         }
-        val display = checkNotNull(vd) { "createVirtualDisplay returned null for $request" }
-        return display to flags
     }
 
     /** 按异常信息剔除被拒绝的特权 flag；消息无法判读时一次性剔除全部特权 flag。 */
@@ -223,10 +267,13 @@ class ShellDisplayEngine(
     override fun removeDisplay(displayId: Int) {
         val info = managed.remove(displayId) ?: throw IllegalArgumentException("display $displayId not managed")
         val vd = virtualDisplays.remove(displayId) ?: throw IllegalStateException("display $displayId has no VirtualDisplay handle")
+        val sink = sinks.remove(displayId)
         runCatching { vd.release() }.onFailure {
+            runCatching { sink?.close() }
             Log.e(TAG, "release displayId=$displayId failed", it)
             throw it
         }
+        runCatching { sink?.close() }
         Log.i(TAG, "removed displayId=$displayId")
     }
 
