@@ -4,6 +4,13 @@
 
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
 
+    <!-- 策略按包名解析 uid（CLI 的 target_package 参数、UI 的包名输入框）依赖
+         PackageManager.getApplicationInfo(其他包)。Android 11+ 的包可见性限制会让它抛
+         NameNotFoundException（表现为「包未安装」），故声明此权限。 -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
     <application
         android:name=".App"
         android:allowBackup="true"
