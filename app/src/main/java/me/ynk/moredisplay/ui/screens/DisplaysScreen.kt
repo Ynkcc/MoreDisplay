@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -23,7 +22,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -39,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -244,12 +243,13 @@ private fun CreateDisplayDialog(
     var height by rememberSaveable { mutableStateOf("1920") }
     var dpi by rememberSaveable { mutableStateOf("320") }
     var name by rememberSaveable { mutableStateOf("MoreDisplay") }
-    var flags by rememberSaveable { mutableStateOf(0) }
+    var flagsText by rememberSaveable { mutableStateOf("0xffcb") }
 
     val w = width.toIntOrNull() ?: 0
     val h = height.toIntOrNull() ?: 0
     val d = dpi.toIntOrNull() ?: 0
-    val valid = w in 1..7680 && h in 1..7680 && d in 10..2000
+    val flags = parseFlags(flagsText)
+    val valid = w in 1..7680 && h in 1..7680 && d in 10..2000 && flags != null
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -298,36 +298,52 @@ private fun CreateDisplayDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text("Flags", style = MaterialTheme.typography.titleSmall)
-                FlowRow(
-                    verticalArrangement = Arrangement.spacedBy(0.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    FLAG_OPTIONS.forEach { (label, bit) ->
-                        val checked = flags and bit != 0
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.width(190.dp)
-                        ) {
-                            Checkbox(
-                                checked = checked,
-                                onCheckedChange = { on ->
-                                    flags = if (on) flags or bit else flags and bit.inv()
-                                }
-                            )
-                            Text(label, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
+                OutlinedTextField(
+                    value = flagsText, onValueChange = { flagsText = it },
+                    label = { Text("mFlags") },
+                    isError = flags == null,
+                    singleLine = true,
+                    supportingText = {
+                        Text(
+                            flags?.let { "解析为 0x${Integer.toHexString(it)} ($it)" }
+                                ?: "无效的 flags 值，请输入 0x 开头的十六进制或十进制数字",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    FLAG_OPTIONS.joinToString("\n") { (label, bit) ->
+                        "0x${Integer.toHexString(bit)} = $label"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(Modifier.height(4.dp))
             }
         },
         confirmButton = {
-            TextButton(enabled = valid && !busy, onClick = { onCreate(w, h, d, name, flags) }) {
+            TextButton(
+                enabled = valid && !busy,
+                onClick = { flags?.let { onCreate(w, h, d, name, it) } }
+            ) {
                 Text("创建")
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
+}
+
+/** 解析 flags 输入：支持十六进制（大小写均可）与纯十进制；无效时返回 null。 */
+private fun parseFlags(text: String): Int? {
+    val s = text.trim()
+    if (s.isEmpty()) return null
+    val body = if (s.startsWith("0x", ignoreCase = true)) s.substring(2) else s
+    if (body.isEmpty() || body.any { it !in "0123456789abcdefABCDEF" }) return null
+    val radix = if (s.startsWith("0x", ignoreCase = true)) 16 else 10
+    val value = body.toLongOrNull(radix) ?: return null
+    return if (value in 0..0xFFFFFFFFL) value.toInt() else null
 }
 
 /** 与 DaemonProvider.priority 对齐的展示排序。 */
