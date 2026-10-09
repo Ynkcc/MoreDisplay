@@ -21,3 +21,13 @@
 -keep class io.github.ynkcc.moredisplay.core.** { *; }
 -keep class io.github.ynkcc.moredisplay.daemon.** { *; }
 -keep class io.github.ynkcc.moredisplay.dispatch.** { *; }
+
+# Xposed 模块入口由 LSPosed 按 META-INF/xposed/java_init.list 里的类名反射加载，
+# dex 内不存在任何对它的引用，开启 R8 后会被整类误裁掉，必须显式保留。
+# （这些类内部反射的是 framework 隐藏 API，framework 不在本 dex 中，不受影响。）
+-keep class io.github.ynkcc.moredisplay.xposed.** { *; }
+-keep class io.github.ynkcc.moredisplay.CommandActivity { *; }
+
+# Shizuku 的 UserService 通过 Binder 跨进程调用，保留 aidl 生成的 Stub/Proxy。
+-keep class **$Stub { *; }
+-keep class **$Stub$Proxy { *; }

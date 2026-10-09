@@ -22,7 +22,10 @@ android {
     buildTypes {
         release {
             optimization {
-                enable = false
+                // 开启 R8：未开启时 dex 达 23.4 MB（占 APK 90%），
+                // Compose / Material3 / AndroidX / Kotlin stdlib 全量打包。
+                // AGP 9 起 minifyEnabled / shrinkResources 已统一由该开关控制。
+                enable = true
             }
         }
     }
@@ -47,15 +50,16 @@ android {
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.tooling.preview)
+    // 仅预览用，不进 release 包。
+    debugImplementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.appcompat)
+    // 全 Compose 项目：不引入 View 版 Material Components 与 androidx.appcompat，
+    // 二者未开启 R8 时会贡献数 MB dex，且项目中没有任何 View 体系代码使用。
     implementation(libs.androidx.core.ktx)
-    implementation(libs.material)
     compileOnly(libs.libxposed.api)
     compileOnly(libs.libxposed.annotation)
     compileOnly(libs.androidx.annotation)

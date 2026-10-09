@@ -19,7 +19,8 @@ android {
     buildTypes {
         release {
             optimization {
-                enable = false
+                // 与 :app 保持一致：开启 R8 后 probe-release 由 2.04 MB 降到约 0.5 MB。
+                enable = true
             }
         }
     }
