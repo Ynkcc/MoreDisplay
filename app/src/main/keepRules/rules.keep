@@ -12,12 +12,12 @@
 }
 -dontwarn io.github.libxposed.annotation.**
 
--keep class me.ynk.moredisplay.shizuku.DaemonUserService {
+-keep class io.github.ynkcc.moredisplay.shizuku.DaemonUserService {
     public <init>(android.content.Context);
     public *;
 }
--keep class me.ynk.moredisplay.shizuku.IDaemonRpc { *; }
--keep class me.ynk.moredisplay.shizuku.IDaemonRpc$* { *; }
--keep class me.ynk.moredisplay.core.** { *; }
--keep class me.ynk.moredisplay.daemon.** { *; }
--keep class me.ynk.moredisplay.dispatch.** { *; }
+-keep class io.github.ynkcc.moredisplay.shizuku.IDaemonRpc { *; }
+-keep class io.github.ynkcc.moredisplay.shizuku.IDaemonRpc$* { *; }
+-keep class io.github.ynkcc.moredisplay.core.** { *; }
+-keep class io.github.ynkcc.moredisplay.daemon.** { *; }
+-keep class io.github.ynkcc.moredisplay.dispatch.** { *; }

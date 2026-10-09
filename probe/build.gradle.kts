@@ -3,13 +3,13 @@ plugins {
 }
 
 android {
-    namespace = "me.ynk.moredisplay.probe"
+    namespace = "io.github.ynkcc.moredisplay.probe"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "me.ynk.moredisplay.probe"
+        applicationId = "io.github.ynkcc.moredisplay.probe"
         minSdk = 29
         targetSdk = 37
         versionCode = 1

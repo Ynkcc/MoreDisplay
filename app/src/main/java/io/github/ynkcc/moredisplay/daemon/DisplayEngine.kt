@@ -1,0 +1,101 @@
+package io.github.ynkcc.moredisplay.daemon
+
+import io.github.ynkcc.moredisplay.core.DisplayInfo
+import io.github.ynkcc.moredisplay.core.DisplaySpec
+import io.github.ynkcc.moredisplay.core.RpcRequest
+import io.github.ynkcc.moredisplay.core.RpcResponse
+
+interface DisplayEngine {
+    val capabilities: io.github.ynkcc.moredisplay.core.DaemonCapabilities
+
+    fun createDisplay(spec: DisplaySpec): DisplayInfo
+    fun holdDisplay(displayId: Int): DisplayInfo?
+    fun removeDisplay(displayId: Int)
+    fun listDisplays(): List<DisplayInfo>
+}
+
+interface RpcServer {
+    fun start(engine: DisplayEngine)
+    fun stop()
+}
+
+fun handleRequest(engine: DisplayEngine, request: RpcRequest): RpcResponse = when (request) {
+    is RpcRequest.Ping -> RpcResponse.Pong(
+        request.id,
+        android.os.Process.myPid(),
+        io.github.ynkcc.moredisplay.core.DaemonProtocol.DAEMON_VERSION
+    )
+    is RpcRequest.GetCapabilities -> RpcResponse.Capabilities(request.id, engine.capabilities)
+    is RpcRequest.CreateDisplay -> runCatching { engine.createDisplay(request.spec) }
+        .fold(
+            { RpcResponse.DisplayResult(request.id, it) },
+            {
+                android.util.Log.e("MoreDisplay_Rpc", "createDisplay failed for ${request.spec}", it)
+                RpcResponse.Error(request.id, 1, "createDisplay failed: ${it.message}")
+            }
+        )
+    is RpcRequest.HoldDisplay -> engine.holdDisplay(request.displayId)
+        ?.let { RpcResponse.DisplayResult(request.id, it) }
+        ?: RpcResponse.Error(request.id, 2, "display ${request.displayId} not held by daemon")
+    is RpcRequest.RemoveDisplay -> runCatching { engine.removeDisplay(request.displayId) }
+        .fold(
+            { RpcResponse.Ok(request.id) },
+            {
+                android.util.Log.e("MoreDisplay_Rpc", "removeDisplay ${request.displayId} failed", it)
+                RpcResponse.Error(request.id, 3, "removeDisplay failed: ${it.message}")
+            }
+        )
+    is RpcRequest.ListDisplays -> RpcResponse.DisplayList(request.id, engine.listDisplays())
+
+    is RpcRequest.SetDisplayPolicy -> {
+        // 需求 B 前置校验：录屏替换目标屏必须真实存在，否则会让镜像指向一个死 id。
+        val recordId = request.policy.recordDisplayId
+        if (recordId != null && !DisplayQuery.rawDisplayIds().contains(recordId)) {
+            RpcResponse.Error(
+                request.id,
+                7,
+                "recordDisplayId=$recordId 当前不存在，请先 create 托管屏（现有 ${DisplayQuery.rawDisplayIds()}）"
+            )
+        } else {
+            runCatching {
+                val stored = DisplayPolicyRegistry.set(request.policy)
+                android.util.Log.i(
+                    "MoreDisplay_Policy",
+                    "policy set: ${stored.describe()} (total=${DisplayPolicyRegistry.list().size})"
+                )
+                RpcResponse.PolicyResult(request.id, stored)
+            }.getOrElse {
+                RpcResponse.Error(request.id, 4, "setDisplayPolicy failed: ${it.message}")
+            }
+        }
+    }
+    is RpcRequest.GetDisplayPolicy ->
+        RpcResponse.PolicyResult(request.id, DisplayPolicyRegistry.get(request.uid))
+    is RpcRequest.RemoveDisplayPolicy -> runCatching {
+        val removed = DisplayPolicyRegistry.remove(request.uid)
+        android.util.Log.i(
+            "MoreDisplay_Policy",
+            "policy remove uid=${request.uid} removed=$removed (total=${DisplayPolicyRegistry.list().size})"
+        )
+        RpcResponse.Ok(request.id)
+    }.getOrElse {
+        RpcResponse.Error(request.id, 5, "removeDisplayPolicy failed: ${it.message}")
+    }
+    is RpcRequest.ListDisplayPolicies -> {
+        logHookStats("listPolicies")
+        RpcResponse.PolicyList(request.id, DisplayPolicyRegistry.list())
+    }
+    is RpcRequest.DisplaysForUid -> runCatching {
+        logHookStats("displaysForUid")
+        RpcResponse.IdList(request.id, DisplayQuery.visibleDisplayIds(request.uid))
+    }.getOrElse {
+        RpcResponse.Error(request.id, 6, "displaysForUid failed: ${it.message}")
+    }
+}
+
+/** 打印 Hook 命中计数，区分「已装」与「已生效」。 */
+private fun logHookStats(trigger: String) {
+    DisplayPolicyRegistry.statsProvider?.invoke()?.let {
+        android.util.Log.i("MoreDisplay_Policy", "hook stats @$trigger: $it")
+    }
+}
