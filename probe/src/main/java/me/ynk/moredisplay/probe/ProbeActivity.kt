@@ -52,6 +52,7 @@ class ProbeActivity : Activity() {
         const val TASK_MP = "mp"
         const val TASK_OWN = "own"
         const val TASK_RELEASE = "release"
+        const val TASK_DUMP = "dump"
 
         private const val MAX_GUESS = 12
         private const val REQ_PROJECTION = 0x501
@@ -106,6 +107,7 @@ class ProbeActivity : Activity() {
         )
         val row3 = row(
             button("释放录屏") { releaseCapture("manual") },
+            button("dump mFlags") { dumpFlags() },
             button("清屏日志") { runCatching { Log.i(TAG, "--- marker ---") }; lines.clear(); render() }
         )
         val root = LinearLayout(this).apply {
@@ -138,6 +140,7 @@ class ProbeActivity : Activity() {
             TASK_MP -> startMediaProjectionProbe()
             TASK_OWN -> startOwnContentProbe()
             TASK_RELEASE -> releaseCapture("task")
+            TASK_DUMP -> dumpFlags()
             else -> record("unknown task: $task")
         }
     }
@@ -367,6 +370,56 @@ class ProbeActivity : Activity() {
         }
         projection = null
     }
+
+    // ------------------------------------------------------------------ mFlags dump
+
+    /**
+     * 读取 `dumpsys display` 中每个虚拟屏的 `mFlags`。
+     * mFlags 是创建时请求的 `VIRTUAL_DISPLAY_FLAG_*`（经 DMS 归一化），与 Display.getFlags() 是两套位表。
+     */
+    private fun dumpFlags() {
+        val text = runCatching {
+            Runtime.getRuntime().exec(arrayOf("dumpsys", "display"))
+                .inputStream.bufferedReader().use { it.readText() }
+        }.getOrElse { record("DUMP 执行失败: $it"); return }
+        if (text.isBlank() || text.contains("Permission Denial")) {
+            record("DUMP 权限不足，请先执行: adb shell pm grant me.ynk.moredisplay.probe android.permission.DUMP")
+            return
+        }
+        record("========== MFLAGS DUMP ==========")
+        val reUid = Regex("""uniqueId="([^"]+)"""")
+        val reFlags = Regex("""\bmFlags=(\d+)\b""")
+        var lastUid: String? = null
+        var count = 0
+        for (raw in text.lineSequence()) {
+            val line = raw.trim()
+            reUid.find(line)?.let { lastUid = it.groupValues[1] }
+            reFlags.find(line)?.let { f ->
+                val dec = f.groupValues[1].toInt()
+                record(
+                    "$lastUid mFlags=$dec (0x${Integer.toHexString(dec)}) " +
+                        "${decodeVirtualFlags(dec)}"
+                )
+                count++
+            }
+        }
+        if (count == 0) record("未找到任何 mFlags 条目")
+        record("========== DUMP END ==========")
+    }
+
+    /** DisplayManager.VIRTUAL_DISPLAY_FLAG_* 位名（bit0..17，与 aosp17 文档一致）。 */
+    private val virtualFlagNames = listOf(
+        "PUBLIC", "PRESENTATION", "SECURE", "OWN_CONTENT_ONLY", "AUTO_MIRROR",
+        "CAN_SHOW_WITH_INSECURE_KEYGUARD", "SUPPORTS_TOUCH", "ROTATES_WITH_CONTENT",
+        "DESTROY_CONTENT_ON_REMOVAL", "SHOULD_SHOW_SYSTEM_DECORATIONS", "TRUSTED",
+        "OWN_DISPLAY_GROUP", "ALWAYS_UNLOCKED", "TOUCH_FEEDBACK_DISABLED", "OWN_FOCUS",
+        "DEVICE_DISPLAY_GROUP", "STEAL_TOP_FOCUS_DISABLED", "ALLOWS_CONTENT_MODE_SWITCH",
+    )
+
+    private fun decodeVirtualFlags(flags: Int): String =
+        (0..31).filter { flags and (1 shl it) != 0 }
+            .joinToString("|") { virtualFlagNames.getOrNull(it) ?: "bit$it" }
+            .ifEmpty { "0" }
 
     // ------------------------------------------------------------------ 工具
 
