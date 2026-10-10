@@ -18,7 +18,9 @@ object CapabilityMatrix {
             // 也只有 hook 进 system_server 才能在 createVirtualDisplayInternal 里改写 mirror 源。
             recordRedirection = true,
             // 同理：hook 进 system_server 才能在无障碍连接处改写手势目标屏。
-            accessibilityRedirection = true
+            accessibilityRedirection = true,
+            // 同理：hook 进 system_server 才能拦截 getRecentTasks 剔除托管屏任务。
+            recentsGate = true
         )
         Privilege.ROOT, Privilege.SHELL_SHIZUKU -> shellPrivilegeCapabilities()
         Privilege.NONE -> DaemonCapabilities.none()

@@ -274,6 +274,7 @@ object RpcCodec {
         parcel.writeInt(if (capabilities.perUidDisplayVisibility) 1 else 0)
         parcel.writeInt(if (capabilities.recordRedirection) 1 else 0)
         parcel.writeInt(if (capabilities.accessibilityRedirection) 1 else 0)
+        parcel.writeInt(if (capabilities.recentsGate) 1 else 0)
     }
 
     private fun readCapabilities(parcel: Parcel) = DaemonCapabilities(
@@ -284,7 +285,8 @@ object RpcCodec {
         privilegedSurface = parcel.readInt() == 1,
         perUidDisplayVisibility = parcel.readInt() == 1,
         recordRedirection = parcel.readInt() == 1,
-        accessibilityRedirection = parcel.readInt() == 1
+        accessibilityRedirection = parcel.readInt() == 1,
+        recentsGate = parcel.readInt() == 1
     )
 
     private const val TAG_PING = 1

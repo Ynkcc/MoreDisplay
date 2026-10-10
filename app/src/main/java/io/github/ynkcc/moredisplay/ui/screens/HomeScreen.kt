@@ -187,6 +187,7 @@ private fun ChannelsCard(connected: Map<Privilege, WorkModeInfo>) {
                                 FeatureChip("按 uid 过滤可见性", mode.capabilities.perUidDisplayVisibility)
                                 FeatureChip("录屏替换", mode.capabilities.recordRedirection)
                                 FeatureChip("无障碍替换", mode.capabilities.accessibilityRedirection)
+                                FeatureChip("最近任务隐藏", mode.capabilities.recentsGate)
                             }
                         }
                     }

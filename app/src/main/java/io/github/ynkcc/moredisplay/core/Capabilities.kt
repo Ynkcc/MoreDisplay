@@ -41,7 +41,9 @@ data class DaemonCapabilities(
     /** 需求 B（未实现）：录屏屏替换。 */
     val recordRedirection: Boolean = false,
     /** 需求 C：无障碍屏替换（LSPosed 模式下已实现，见 AccessibilityRedirectHooks）。 */
-    val accessibilityRedirection: Boolean = false
+    val accessibilityRedirection: Boolean = false,
+    /** 需求 D：托管屏任务从最近任务剔除（LSPosed 模式下已实现，见 RecentsGate）。 */
+    val recentsGate: Boolean = false
 ) {
     fun supportsFlags(flags: Int): Boolean = flags and supportedFlags.inv() == 0
 

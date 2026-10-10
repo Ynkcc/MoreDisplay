@@ -8,6 +8,7 @@ import io.github.libxposed.api.XposedModuleInterface
 import io.github.ynkcc.moredisplay.daemon.DisplayEngine
 import io.github.ynkcc.moredisplay.daemon.DisplayPolicyRegistry
 import io.github.ynkcc.moredisplay.daemon.ProviderRpc
+import io.github.ynkcc.moredisplay.daemon.RecentsGate
 import io.github.ynkcc.moredisplay.daemon.SystemDisplayEngine
 import java.lang.reflect.Executable
 import java.util.concurrent.ConcurrentHashMap
@@ -23,7 +24,9 @@ import java.util.concurrent.ConcurrentHashMap
  * 3. 按调用方 uid 过滤屏幕可见性（列表 / 点名 / 事件三处，见
  *    [installDisplayVisibilityHooks]），**不 Hook 目标 App**；
  * 4. 按调用方 uid 把录屏的 mirror 源改写到托管屏（见 [installRecordMirrorHooks]）；
- * 5. 按服务包名把无障碍手势改写到托管屏（见 [installAccessibilityRedirectHooks]）。
+ * 5. 按服务包名把无障碍手势改写到托管屏（见 [installAccessibilityRedirectHooks]）；
+ * 6. 从最近任务查询结果中剔除托管屏任务（见 [hookRecentsGate]）——
+ *    所有 ROM 的最近任务 UI 都收敛到 `ActivityTaskManagerService#getRecentTasks`。
  */
 class LsposedModule : XposedModule() {
 
@@ -47,6 +50,7 @@ class LsposedModule : XposedModule() {
         installDisplayVisibilityHooks(param.classLoader)
         installRecordMirrorHooks(param.classLoader)
         installAccessibilityRedirectHooks(param.classLoader)
+        hookRecentsGate(param.classLoader)
         DisplayPolicyRegistry.statsProvider = {
             "${visibilityHookStats()} | ${recordMirrorHookStats()} | ${accessibilityHookStats()}"
         }
@@ -168,8 +172,34 @@ class LsposedModule : XposedModule() {
         )
     }
 
-    private fun hookLaunchPermission(classLoader: ClassLoader) {
-        val supervisor = when {
+    /**
+     * 最近任务门禁：hook `ActivityTaskManagerService#getRecentTasks`（全部重载），
+     * after 回调按 displayId 剔除托管屏任务。
+     *
+     * 匹配规则：方法名 getRecentTasks + 返回 ParceledListSlice（不硬编码参数签名，
+     * ROM 在该入口增删参数也能装上）。目标方法与过滤逻辑见 [RecentsGate]。
+     */
+    private fun hookRecentsGate(classLoader: ClassLoader) {
+        runCatching {
+            val targets = RecentsGate.findTargets(classLoader)
+            if (targets.isEmpty()) {
+                log(Log.ERROR, TAG, "hookRecentsGate: no target methods found")
+                return
+            }
+            targets.forEach { method ->
+                hook(method).intercept { chain -> RecentsGate.filterRecentTasks(chain.proceed()) }
+            }
+            RecentsGate.isManagedDisplay = { SystemDaemon.isManagedDisplay(it) }
+            RecentsGate.markInstalled(targets.size)
+            log(
+                Log.INFO, TAG,
+                "recents gate hooks installed on ${targets.size} target(s): " +
+                    targets.joinToString { "getRecentTasks/${it.parameterCount}" }
+            )
+        }.onFailure { log(Log.ERROR, TAG, "hookRecentsGate failed", it) }
+    }
+
+    private fun hookLaunchPermission(classLoader: ClassLoader) {        val supervisor = when {
             android.os.Build.VERSION.SDK_INT >= 31 -> "com.android.server.wm.ActivityTaskSupervisor"
             else -> null
         } ?: run {
