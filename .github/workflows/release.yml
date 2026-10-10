@@ -15,7 +15,7 @@ jobs:
       version_name: ${{ steps.ver.outputs.version_name }}
       version_code: ${{ steps.ver.outputs.version_code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up JDK 25
         uses: actions/setup-java@v4
@@ -85,7 +85,7 @@ jobs:
       VERSION_NAME: ${{ needs.release.outputs.version_name }}
       VERSION_CODE: ${{ needs.release.outputs.version_code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download release notes
         uses: actions/download-artifact@v4
