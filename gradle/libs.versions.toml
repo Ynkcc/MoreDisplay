@@ -11,7 +11,7 @@ libxposedAnnotation = "1.0.0"
 androidxAnnotation = "1.11.0"
 shizuku = "13.1.5"
 kotlin = "2.4.20"
-composeBom = "2025.06.01"
+composeBom = "2026.09.00"
 # material-icons 已脱离 Compose BOM（BOM 2024.12+ / material3 1.4 起不再传递引入），
 # 需显式声明版本；1.7.8 为独立版本线的最终稳定版。
 composeIcons = "1.7.8"
