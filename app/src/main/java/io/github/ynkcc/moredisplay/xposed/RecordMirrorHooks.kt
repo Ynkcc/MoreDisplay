@@ -88,7 +88,8 @@ fun XposedModule.installRecordMirrorHooks(classLoader: ClassLoader) {
             val config = chain.getArg(0)
             val uid = (uidArgIndex.takeIf { it >= 0 }?.let { chain.getArg(it) } as? Int)
                 ?: Binder.getCallingUid()
-            if (config != null && uid != null) {
+            // uid 经 elvis 链后必为非空 Int，此处只需判 config
+            if (config != null) {
                 runCatching { tryRedirectMirror(this, chain, config, uid) }
                     .onFailure { Log.e(TAG, "mirror redirect failed uid=$uid", it) }
             }

@@ -47,6 +47,14 @@ android {
     }
 }
 
+// AGP 9.x 会在 classpath 内嵌自己的 KGP（本例为 2.2.10），compose 插件据此解析
+// composeMappingProducerClasspath 中的 org.jetbrains.kotlin:compose-group-mapping，
+// 但该构件自 2.4.x 才开始发布，2.2.10 不存在 => 全量 assemble（如 CodeQL autobuild）失败。
+// 强制对齐到项目实际使用的 KGP 版本。
+configurations.matching { it.name == "composeMappingProducerClasspath" }.configureEach {
+    resolutionStrategy.force("org.jetbrains.kotlin:compose-group-mapping:${libs.versions.kotlin.get()}")
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
