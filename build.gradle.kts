@@ -1,6 +1,26 @@
 import com.android.build.api.dsl.ApplicationExtension
 import java.util.Base64
 
+// ---- 构建类路径漏洞修复（Dependabot alerts #1-#9）----
+// 这些包由 AGP 传递引入，仅存在于 buildscript 类路径，不进 APK。
+// 强制解析到无漏洞版本（kotlin-gradle-plugin 为 AGP 内嵌工具链，不强升以保兼容）。
+// 注意：buildscript{} 必须位于 plugins{} 之前。
+buildscript {
+    configurations.classpath {
+        resolutionStrategy {
+            force(
+                // bcprov < 1.85 有 critical CVE
+                "org.bouncycastle:bcprov-jdk18on:1.85",
+                "org.bouncycastle:bcpkix-jdk18on:1.85",
+                "org.bouncycastle:bcutil-jdk18on:1.85",
+                "org.bitbucket.b_c:jose4j:0.9.6",
+                "org.jdom:jdom2:2.0.6.1",
+                "org.apache.commons:commons-lang3:3.18.0",
+            )
+        }
+    }
+}
+
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
     alias(libs.plugins.android.application) apply false

@@ -100,7 +100,7 @@ class ShellDisplayEngine(
                 t == Boolean::class.javaPrimitiveType -> false
                 else -> null
             }
-        }.toTypedArray()
+        }.toTypedArray<Any?>()
         return ctor.newInstance(*args) as android.content.AttributionSource
     }
 
@@ -146,9 +146,9 @@ class ShellDisplayEngine(
     override val capabilities =
         CapabilityMatrix.shellPrivilegeCapabilities(hasPrivilege)
 
-    override fun createDisplay(request: DisplaySpec): DisplayInfo {
+    override fun createDisplay(spec: DisplaySpec): DisplayInfo {
         var flags = CapabilityMatrix.normalizeFlagCombination(
-            CapabilityMatrix.flagsForSdk(request.flags)
+            CapabilityMatrix.flagsForSdk(spec.flags)
         )
         // 与 DMS 行为对齐：非 TRUSTED 的屏 sys-decor 会被静默剔除，直接上报真实值。
         if (flags and VirtualDisplayFlags.TRUSTED == 0) {
@@ -162,15 +162,15 @@ class ShellDisplayEngine(
         for (name in candidates) {
             val ctx = contextFor(name)
             try {
-                val created = createWithFlagDowngrade(ctx, request, flags)
+                val created = createWithFlagDowngrade(ctx, spec, flags)
                 flags = created.flags
                 resolvedContext = ctx
-                val spec = request.copy(flags = flags)
-                val info = DisplayInfo(created.virtualDisplay.display.displayId, spec)
+                val adjusted = spec.copy(flags = flags)
+                val info = DisplayInfo(created.virtualDisplay.display.displayId, adjusted)
                 managed[info.displayId] = info
                 virtualDisplays[info.displayId] = created.virtualDisplay
                 sinks[info.displayId] = created.sink
-                Log.i(TAG, "created displayId=${info.displayId} ${spec.width}x${spec.height}@${spec.densityDpi} " +
+                Log.i(TAG, "created displayId=${info.displayId} ${adjusted.width}x${adjusted.height}@${adjusted.densityDpi} " +
                     "flags=0x${Integer.toHexString(flags)} as $name (uid=$myUid) with output sink")
                 return info
             } catch (e: SecurityException) {
@@ -195,16 +195,16 @@ class ShellDisplayEngine(
 
     private fun createWithFlagDowngrade(
         ctx: android.content.Context,
-        request: DisplaySpec,
+        spec: DisplaySpec,
         initialFlags: Int
     ): Created {
         var flags = initialFlags
         var attempt = 0
         while (true) {
-            val sink = newSink(request.width, request.height)
+            val sink = newSink(spec.width, spec.height)
             val vd = try {
                 displayManagerOf(ctx).createVirtualDisplay(
-                    request.name, request.width, request.height, request.densityDpi,
+                    spec.name, spec.width, spec.height, spec.densityDpi,
                     sink.surface, flags
                 )
             } catch (e: SecurityException) {
@@ -223,7 +223,7 @@ class ShellDisplayEngine(
             }
             if (vd == null) {
                 runCatching { sink.reader.close() }
-                throw IllegalStateException("createVirtualDisplay returned null for $request")
+                throw IllegalStateException("createVirtualDisplay returned null for $spec")
             }
             return Created(vd, flags, sink.reader)
         }
@@ -261,7 +261,8 @@ class ShellDisplayEngine(
         val ctx = resolvedContext ?: context
         val display = displayManagerOf(ctx).getDisplay(displayId) ?: return null
         val dpi = ctx.resources.displayMetrics.densityDpi
-        return DisplayInfo(displayId, DisplaySpec(display.width, display.height, dpi)).also { managed[displayId] = it }
+        // display.width/height 已弃用；物理面板尺寸对虚拟显示 spec 语义也更准确
+        return DisplayInfo(displayId, DisplaySpec(display.mode.physicalWidth, display.mode.physicalHeight, dpi)).also { managed[displayId] = it }
     }
 
     override fun removeDisplay(displayId: Int) {

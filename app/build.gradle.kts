@@ -53,6 +53,8 @@ dependencies {
     // 仅预览用，不进 release 包。
     debugImplementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    // icons 不再由 BOM / material3 传递提供，必须显式引入
+    implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

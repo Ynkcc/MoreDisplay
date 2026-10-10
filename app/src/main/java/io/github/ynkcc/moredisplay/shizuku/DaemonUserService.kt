@@ -30,6 +30,10 @@ class DaemonUserService @Keep constructor(context: Context) : IDaemonRpc.Stub() 
      * uid 2000 + com.android.shell 则在所有 ROM 上均合法，故统一降权。
      * 必须在构造期（binder 线程启动前）执行，保证后续线程继承降权后的身份。
      */
+    // Os.setuid/setgid 被弃用的原因是"普通应用无权限调用"；
+    // 本守护进程以 root 运行并主动降权到 shell(2000)，是有意使用的合法场景，
+    // SDK 亦无对应的非弃用等价 API，故显式豁免。
+    @Suppress("DEPRECATION")
     private fun demoteToShellIfNeeded() {
         if (android.os.Process.myUid() != 0) return
         runCatching {
