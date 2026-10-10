@@ -73,6 +73,9 @@ dependencies {
     compileOnly(libs.libxposed.api)
     compileOnly(libs.libxposed.annotation)
     compileOnly(libs.androidx.annotation)
+    // DWPC（android.window.DisplayWindowPolicyController）隐藏类抽象签名，
+    // 仅编译期可见、不进 APK；运行时父类解析命中 boot classpath 的 ROM 真实类。
+    compileOnly(project(":hiddenapi"))
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
     testImplementation(libs.junit)

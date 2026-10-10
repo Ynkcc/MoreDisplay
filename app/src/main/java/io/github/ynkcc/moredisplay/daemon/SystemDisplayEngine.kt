@@ -45,6 +45,11 @@ class SystemDisplayEngine(
     companion object {
         private const val TAG = "SystemDisplayEngine"
         private const val GLOBAL_CLASS = "android.hardware.display.DisplayManagerGlobal"
+        private const val GATE_TAG = "MoreDisplay_RecentsGate"
+        private const val ATTACH_INTERVAL_MS = 100L
+        private const val ATTACH_MAX_ATTEMPTS = 50
+        private const val DETACH_INTERVAL_MS = 100L
+        private const val DETACH_MAX_ATTEMPTS = 10
     }
 
     private val lock = Any()
@@ -95,12 +100,48 @@ class SystemDisplayEngine(
             handles[info.displayId] = vd
             sinks[info.displayId] = sink.reader
         }
+        // 最近任务门禁：DisplayContent 由 WMS 异步创建，轮询注入（失败不建屏失败，仅记日志）。
+        scheduleAttachRecentsGate(info.displayId)
         Log.i(
             TAG,
             "created displayId=${info.displayId} ${spec.width}x${spec.height}@${spec.densityDpi} " +
                 "flags=0x${Integer.toHexString(flags)} owner=${systemContext.packageName} (with output sink)"
         )
         return info
+    }
+
+    /**
+     * 轮询等待 WMS 为 displayId 建好 `DisplayContent`，然后注入 RecentsGate 门禁。
+     * 每 100ms 一次，最多 50 次（5s）；成功/最终失败都只打一条日志，绝不抛出。
+     */
+    private fun scheduleAttachRecentsGate(displayId: Int, attempt: Int = 0) {
+        if (attempt == 0) {
+            Log.i(GATE_TAG, "attach scheduled displayId=$displayId (gate armed)")
+        }
+        sinkHandler.postDelayed({
+            val stillManaged = synchronized(lock) { managed.containsKey(displayId) }
+            if (!stillManaged) {
+                Log.i(GATE_TAG, "attach aborted displayId=$displayId (display removed)")
+                return@postDelayed
+            }
+            when {
+                RecentsGate.attach(displayId) -> Unit
+                attempt >= ATTACH_MAX_ATTEMPTS - 1 ->
+                    Log.e(GATE_TAG, "attach FAILED displayId=$displayId after $ATTACH_MAX_ATTEMPTS attempts")
+                else -> scheduleAttachRecentsGate(displayId, attempt + 1)
+            }
+        }, ATTACH_INTERVAL_MS)
+    }
+
+    private fun scheduleDetachRecentsGate(displayId: Int, attempt: Int = 0) {
+        sinkHandler.postDelayed({
+            when {
+                RecentsGate.detach(displayId) -> Unit
+                attempt >= DETACH_MAX_ATTEMPTS - 1 ->
+                    Log.e(GATE_TAG, "detach FAILED displayId=$displayId (display is being removed anyway)")
+                else -> scheduleDetachRecentsGate(displayId, attempt + 1)
+            }
+        }, DETACH_INTERVAL_MS)
     }
 
     /**
@@ -127,6 +168,11 @@ class SystemDisplayEngine(
             vd = handles.remove(displayId)
                 ?: throw IllegalStateException("display $displayId has no VirtualDisplay handle")
             sink = sinks.remove(displayId)
+        }
+        // 先拔门禁再释放屏幕：此刻 DisplayContent 通常还在，同步拔除；
+        // 若 WMS 侧对象竞态导致失败，再用短重试兜底（release 后 DisplayContent 会销毁，属正常）。
+        if (!RecentsGate.detach(displayId)) {
+            scheduleDetachRecentsGate(displayId)
         }
         runCatching { vd.release() }
         runCatching { sink?.close() }
