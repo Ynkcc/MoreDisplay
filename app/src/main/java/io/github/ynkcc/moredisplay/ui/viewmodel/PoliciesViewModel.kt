@@ -3,12 +3,20 @@ package io.github.ynkcc.moredisplay.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import io.github.ynkcc.moredisplay.core.DisplayPolicy
 import io.github.ynkcc.moredisplay.core.IDisplayRepository
 import io.github.ynkcc.moredisplay.core.Visibility
+
+/** 应用选择器条目：label / 包名 / uid 一次取齐，图标在 UI 层按需加载。 */
+data class AppEntry(
+    val packageName: String,
+    val label: String,
+    val uid: Int
+)
 
 class PoliciesViewModel(
     private val repo: IDisplayRepository,
@@ -26,8 +34,26 @@ class PoliciesViewModel(
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message
 
+    /** 已安装应用列表；null = 尚未加载/加载中。 */
+    private val _installedApps = MutableStateFlow<List<AppEntry>?>(null)
+    val installedApps: StateFlow<List<AppEntry>?> = _installedApps
+
     init {
         reload()
+    }
+
+    /** 首次调用时在 IO 线程读取已安装应用，结果缓存，重复调用为空操作。 */
+    fun loadInstalledApps() {
+        if (_installedApps.value != null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val pm = app.packageManager
+            val list = runCatching {
+                pm.getInstalledApplications(0)
+                    .map { AppEntry(it.packageName, it.loadLabel(pm).toString(), it.uid) }
+                    .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.label })
+            }.getOrDefault(emptyList())
+            _installedApps.value = list
+        }
     }
 
     fun reload() {

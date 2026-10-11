@@ -25,8 +25,6 @@ enum class Visibility {
 /**
  * 可见性策略条目。以 [uid] 为主键（[packageName] 仅作展示/可读性）。
  *
- * [operatedDisplayId] / [recordDisplayId] 预留给后续的「无障碍屏替换」「录屏屏替换」，
- * 本阶段不参与可见性判断。
  */
 data class DisplayPolicy(
     val uid: Int,
