@@ -2,8 +2,6 @@ package io.github.ynkcc.moredisplay.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -51,6 +49,7 @@ import kotlinx.coroutines.isActive
 import io.github.ynkcc.moredisplay.core.DisplayInfo
 import io.github.ynkcc.moredisplay.core.Privilege
 import io.github.ynkcc.moredisplay.core.VirtualDisplayFlags
+import io.github.ynkcc.moredisplay.ui.CreateHistoryStore
 import io.github.ynkcc.moredisplay.ui.viewmodel.DisplaysViewModel
 import io.github.ynkcc.moredisplay.ui.viewmodel.label
 
@@ -157,6 +156,7 @@ fun DisplaysScreen(
                 onDismiss = { createChannel = null },
                 onCreate = { w, h, dpi, name, flags ->
                     createChannel = null
+                    CreateHistoryStore.record(w, h, dpi)
                     vm.createDisplay(channel, w, h, dpi, name, flags)
                 }
             )
@@ -231,7 +231,6 @@ private fun DisplayCard(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CreateDisplayDialog(
     channel: Privilege,
@@ -239,11 +238,13 @@ private fun CreateDisplayDialog(
     onDismiss: () -> Unit,
     onCreate: (Int, Int, Int, String, Int) -> Unit
 ) {
-    var width by rememberSaveable { mutableStateOf("1080") }
-    var height by rememberSaveable { mutableStateOf("1920") }
-    var dpi by rememberSaveable { mutableStateOf("320") }
+    // 不再预设尺寸/dpi，初始为空，由用户输入或从历史记录填充。
+    var width by rememberSaveable { mutableStateOf("") }
+    var height by rememberSaveable { mutableStateOf("") }
+    var dpi by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("MoreDisplay") }
     var flagsText by rememberSaveable { mutableStateOf("0xffcb") }
+    var history by remember { mutableStateOf(CreateHistoryStore.load()) }
 
     val w = width.toIntOrNull() ?: 0
     val h = height.toIntOrNull() ?: 0
@@ -259,38 +260,44 @@ private fun CreateDisplayDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("1080×1920@320" to Triple(1080, 1920, 320),
-                           "1920×1080@240" to Triple(1920, 1080, 240),
-                           "800×1280@213" to Triple(800, 1280, 213)).forEach { (label, v) ->
-                        AssistChip(onClick = {
-                            width = v.first.toString(); height = v.second.toString(); dpi = v.third.toString()
-                        }, label = { Text(label) })
+                if (history.isNotEmpty()) {
+                    // 最近使用的尺寸，水平并排，点击快速填充。
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        history.take(CreateHistoryStore.MAX_ENTRIES).forEach { e ->
+                            AssistChip(onClick = {
+                                width = e.width.toString()
+                                height = e.height.toString()
+                                dpi = e.dpi.toString()
+                            }, label = { Text(e.toString()) })
+                        }
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = width, onValueChange = { width = it },
                         label = { Text("宽度") },
+                        placeholder = { Text("如 1080", style = MaterialTheme.typography.bodySmall) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        isError = w !in 1..7680,
+                        isError = width.isNotEmpty() && w !in 1..7680,
                         modifier = Modifier.weight(1f)
                     )
                     OutlinedTextField(
                         value = height, onValueChange = { height = it },
                         label = { Text("高度") },
+                        placeholder = { Text("如 1920", style = MaterialTheme.typography.bodySmall) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        isError = h !in 1..7680,
+                        isError = height.isNotEmpty() && h !in 1..7680,
                         modifier = Modifier.weight(1f)
                     )
-                }
-                OutlinedTextField(
+                    }
+                    OutlinedTextField(
                     value = dpi, onValueChange = { dpi = it },
                     label = { Text("密度 (dpi)") },
+                    placeholder = { Text("如 320", style = MaterialTheme.typography.bodySmall) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    isError = d !in 10..2000,
+                    isError = dpi.isNotEmpty() && d !in 10..2000,
                     modifier = Modifier.fillMaxWidth()
-                )
+                    )
                 OutlinedTextField(
                     value = name, onValueChange = { name = it },
                     label = { Text("名称") },

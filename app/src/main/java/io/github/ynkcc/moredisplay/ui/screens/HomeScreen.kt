@@ -180,7 +180,6 @@ private fun ChannelsCard(connected: Map<Privilege, WorkModeInfo>) {
                                 )
                             }
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FeatureChip("最大 ${mode.capabilities.maxDisplayCount} 块屏幕")
                                 FeatureChip("启动旁路", mode.capabilities.launchOnDisplayBypass)
                                 FeatureChip("解锁屏显示", mode.capabilities.unlockedDisplay)
                                 FeatureChip("特权 Surface", mode.capabilities.privilegedSurface)
