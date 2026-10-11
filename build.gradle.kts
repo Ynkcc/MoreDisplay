@@ -64,6 +64,11 @@ subprojects {
                 buildTypes.getByName("release") {
                     signingConfig = signingConfigs.getByName("release")
                 }
+                // debug 复用 release 签名：与 release 包可互相覆盖安装，
+                // Xposed / Shizuku 场景签名校验一致；debuggable 不受影响。
+                buildTypes.getByName("debug") {
+                    signingConfig = signingConfigs.getByName("release")
+                }
             }
         }
     }
